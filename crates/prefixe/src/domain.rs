@@ -30,6 +30,11 @@ impl From<String> for OriginalCommand {
     }
 }
 
+/// Port: strategy for rewriting a shell command with prefix injection.
+pub trait CommandRewriter {
+    fn rewrite(&self, cmd: &str) -> crate::RewriteResult;
+}
+
 /// Port: strategy for splitting and rejoining compound shell commands.
 pub trait CommandSplitter {
     fn split(&self, cmd: &str) -> Vec<crate::Segment>;

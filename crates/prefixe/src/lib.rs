@@ -2,7 +2,9 @@ pub mod domain;
 pub mod error;
 pub mod infra;
 
-pub use domain::{CommandSplitter, OriginalCommand, PrefixConfig, TextualSplitter};
+pub use domain::{
+    CommandRewriter, CommandSplitter, OriginalCommand, PrefixConfig, TextualSplitter,
+};
 pub use error::Error;
 pub use infra::path::{EnvPathResolver, PathResolver};
 pub use infra::toml_store::{FilePrefixStore, FileProbeStore};
@@ -272,6 +274,16 @@ pub mod testing {
 
         pub fn empty() -> Self {
             Self::new(vec![])
+        }
+    }
+
+    pub struct FakeRewriter {
+        pub result: RewriteResult,
+    }
+
+    impl CommandRewriter for FakeRewriter {
+        fn rewrite(&self, _cmd: &str) -> RewriteResult {
+            self.result.clone()
         }
     }
 
@@ -604,6 +616,35 @@ mod tests {
         // Verifies PrefixConfig is a pure domain type (no serde derives)
         let _c: PrefixConfig = Default::default();
         assert!(_c.mappings.is_empty());
+    }
+
+    #[test]
+    fn command_rewriter_trait_is_mockable() {
+        use crate::{CommandRewriter, RewriteResult};
+        struct NoOpRewriter;
+        impl CommandRewriter for NoOpRewriter {
+            fn rewrite(&self, cmd: &str) -> RewriteResult {
+                RewriteResult {
+                    rewritten: cmd.to_string(),
+                    probes: vec![],
+                }
+            }
+        }
+        let r = NoOpRewriter;
+        assert_eq!(r.rewrite("echo hi").rewritten, "echo hi");
+    }
+
+    #[test]
+    fn fake_rewriter_returns_preset_result() {
+        use crate::testing::FakeRewriter;
+        use crate::{CommandRewriter, RewriteResult};
+        let fake = FakeRewriter {
+            result: RewriteResult {
+                rewritten: "op run -- gh".to_string(),
+                probes: vec![],
+            },
+        };
+        assert_eq!(fake.rewrite("gh").rewritten, "op run -- gh");
     }
 
     #[test]
