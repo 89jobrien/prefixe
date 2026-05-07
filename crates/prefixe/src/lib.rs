@@ -1,10 +1,12 @@
 pub mod domain;
+pub mod engine;
 pub mod error;
 pub mod infra;
 
 pub use domain::{
     CommandRewriter, CommandSplitter, OriginalCommand, PrefixConfig, TextualSplitter,
 };
+pub use engine::PrefixEngine;
 pub use error::Error;
 pub use infra::path::{EnvPathResolver, PathResolver};
 pub use infra::toml_store::{FilePrefixStore, FileProbeStore};
@@ -616,6 +618,56 @@ mod tests {
         // Verifies PrefixConfig is a pure domain type (no serde derives)
         let _c: PrefixConfig = Default::default();
         assert!(_c.mappings.is_empty());
+    }
+
+    #[test]
+    fn prefix_engine_rewrite_confirmed() {
+        use crate::testing::{FakePrefixStore, FakeProbeStore};
+        use crate::{PrefixConfig, PrefixEngine};
+
+        let store = FakePrefixStore::new(PrefixConfig {
+            mappings: [(
+                "gh".to_string(),
+                vec!["op".to_string(), "run".to_string(), "--".to_string()],
+            )]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        });
+        let engine = PrefixEngine::new(store, FakeProbeStore::empty());
+        let r = engine.rewrite("gh issue list");
+        assert_eq!(r.rewritten, "op run -- gh issue list");
+    }
+
+    #[test]
+    fn prefix_engine_audit_returns_sorted_mappings() {
+        use crate::testing::{FakePrefixStore, FakeProbeStore};
+        use crate::{PrefixConfig, PrefixEngine};
+
+        let store = FakePrefixStore::new(PrefixConfig {
+            mappings: [
+                ("gh".to_string(), vec!["op".to_string()]),
+                ("cargo".to_string(), vec!["dotenvx".to_string()]),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        });
+        let engine = PrefixEngine::new(store, FakeProbeStore::empty());
+        let audit = engine.audit();
+        assert_eq!(audit.mappings[0].0, "cargo");
+        assert_eq!(audit.mappings[1].0, "gh");
+    }
+
+    #[test]
+    fn prefix_engine_implements_command_rewriter() {
+        use crate::testing::{FakePrefixStore, FakeProbeStore};
+        use crate::{CommandRewriter, PrefixConfig, PrefixEngine};
+
+        let store = FakePrefixStore::new(PrefixConfig::default());
+        let engine = PrefixEngine::new(store, FakeProbeStore::empty());
+        let r: &dyn CommandRewriter = &engine;
+        assert_eq!(r.rewrite("echo hi").rewritten, "echo hi");
     }
 
     #[test]
