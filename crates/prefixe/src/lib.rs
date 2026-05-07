@@ -4,6 +4,7 @@ pub mod infra;
 
 pub use domain::{OriginalCommand, PrefixConfig};
 pub use error::Error;
+pub use infra::path::{EnvPathResolver, PathResolver};
 pub use infra::toml_store::{FilePrefixStore, FileProbeStore};
 
 /// Port for reading and writing the prefix config.
@@ -218,6 +219,9 @@ pub fn audit_state(prefix_store: &dyn PrefixStore, probe_store: &dyn ProbeStore)
 }
 
 /// Test doubles available to downstream crates under the `testing` feature.
+#[cfg(any(test, feature = "testing"))]
+pub use infra::path::ExplicitPathResolver;
+
 #[cfg(any(test, feature = "testing"))]
 pub mod testing {
     use super::*;
@@ -600,6 +604,36 @@ mod tests {
         // Verifies PrefixConfig is a pure domain type (no serde derives)
         let _c: PrefixConfig = Default::default();
         assert!(_c.mappings.is_empty());
+    }
+
+    #[test]
+    fn explicit_path_resolver_returns_given_paths() {
+        use crate::{ExplicitPathResolver, PathResolver};
+        let r = ExplicitPathResolver {
+            prefix_config: std::path::PathBuf::from("/tmp/prefixes.toml"),
+            probe_store: std::path::PathBuf::from("/tmp/candidates.toml"),
+        };
+        assert_eq!(
+            r.prefix_config_path(),
+            std::path::PathBuf::from("/tmp/prefixes.toml")
+        );
+        assert_eq!(
+            r.probe_store_path(),
+            std::path::PathBuf::from("/tmp/candidates.toml")
+        );
+    }
+
+    #[test]
+    fn file_stores_from_resolver() {
+        use crate::{ExplicitPathResolver, FilePrefixStore, FileProbeStore};
+        let r = ExplicitPathResolver {
+            prefix_config: std::path::PathBuf::from("/tmp/p.toml"),
+            probe_store: std::path::PathBuf::from("/tmp/c.toml"),
+        };
+        let ps = FilePrefixStore::from_resolver(&r);
+        let qs = FileProbeStore::from_resolver(&r);
+        assert_eq!(ps.path, std::path::PathBuf::from("/tmp/p.toml"));
+        assert_eq!(qs.path, std::path::PathBuf::from("/tmp/c.toml"));
     }
 
     #[test]

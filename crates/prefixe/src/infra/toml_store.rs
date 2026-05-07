@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Error, PrefixStore, ProbeEntry, ProbeStore,
     domain::{OriginalCommand, PrefixConfig},
+    infra::path::PathResolver,
 };
 
 // ── PrefixConfig TOML DTO ────────────────────────────────────────────────────
@@ -87,6 +88,10 @@ impl FilePrefixStore {
         Self { path }
     }
 
+    pub fn from_resolver(r: &dyn PathResolver) -> Self {
+        Self::new(r.prefix_config_path())
+    }
+
     pub fn default_path() -> PathBuf {
         std::env::var_os("CRS_RX_PREFIXES")
             .map(PathBuf::from)
@@ -156,6 +161,10 @@ pub struct FileProbeStore {
 impl FileProbeStore {
     pub fn new(path: PathBuf) -> Self {
         Self { path }
+    }
+
+    pub fn from_resolver(r: &dyn PathResolver) -> Self {
+        Self::new(r.probe_store_path())
     }
 
     pub fn default_path() -> PathBuf {
