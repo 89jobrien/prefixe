@@ -158,9 +158,18 @@ pub struct RewriteResult {
     pub probes: Vec<ProbeEntry>,
 }
 
+/// Rewrite `cmd` using the given store as the prefix source.
+///
+/// Prefer this over `rewrite_command` when you have a `PrefixStore` port.
+/// For full use-case orchestration, use [`PrefixEngine`] instead.
+pub fn rewrite_via_store(cmd: &str, store: &dyn PrefixStore) -> RewriteResult {
+    rewrite_command(cmd, &store.load())
+}
+
 /// Rewrite `cmd` by prepending learned prefixes to each shell segment.
 ///
 /// Probes are only recorded when `config.learn_on_successful_fallback` is `true`.
+/// Prefer [`rewrite_via_store`] or [`PrefixEngine::rewrite`] in application code.
 pub fn rewrite_command(cmd: &str, config: &PrefixConfig) -> RewriteResult {
     let mut segs = split_segments(cmd);
     let mut probes = Vec::new();
@@ -618,6 +627,20 @@ mod tests {
         // Verifies PrefixConfig is a pure domain type (no serde derives)
         let _c: PrefixConfig = Default::default();
         assert!(_c.mappings.is_empty());
+    }
+
+    #[test]
+    fn rewrite_via_store_port_confirmed() {
+        use crate::testing::FakePrefixStore;
+        use crate::{PrefixConfig, rewrite_via_store};
+        let store = FakePrefixStore::new(PrefixConfig {
+            mappings: [("gh".to_string(), vec!["op".to_string()])]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        });
+        let r = rewrite_via_store("gh issue list", &store);
+        assert_eq!(r.rewritten, "op gh issue list");
     }
 
     #[test]
