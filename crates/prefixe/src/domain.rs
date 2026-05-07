@@ -30,6 +30,25 @@ impl From<String> for OriginalCommand {
     }
 }
 
+/// Port: strategy for splitting and rejoining compound shell commands.
+pub trait CommandSplitter {
+    fn split(&self, cmd: &str) -> Vec<crate::Segment>;
+    fn rejoin(&self, segs: &[crate::Segment]) -> String;
+}
+
+/// Default textual splitter — does not handle quoted separators.
+pub struct TextualSplitter;
+
+impl CommandSplitter for TextualSplitter {
+    fn split(&self, cmd: &str) -> Vec<crate::Segment> {
+        crate::split_segments(cmd)
+    }
+
+    fn rejoin(&self, segs: &[crate::Segment]) -> String {
+        crate::rejoin(segs)
+    }
+}
+
 impl std::fmt::Display for OriginalCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)

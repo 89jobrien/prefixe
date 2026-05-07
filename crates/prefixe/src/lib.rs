@@ -2,7 +2,7 @@ pub mod domain;
 pub mod error;
 pub mod infra;
 
-pub use domain::{OriginalCommand, PrefixConfig};
+pub use domain::{CommandSplitter, OriginalCommand, PrefixConfig, TextualSplitter};
 pub use error::Error;
 pub use infra::path::{EnvPathResolver, PathResolver};
 pub use infra::toml_store::{FilePrefixStore, FileProbeStore};
@@ -604,6 +604,16 @@ mod tests {
         // Verifies PrefixConfig is a pure domain type (no serde derives)
         let _c: PrefixConfig = Default::default();
         assert!(_c.mappings.is_empty());
+    }
+
+    #[test]
+    fn textual_splitter_splits_and_rejoins() {
+        use crate::{CommandSplitter, TextualSplitter};
+        let s = TextualSplitter;
+        let segs = s.split("a | b");
+        assert_eq!(segs.len(), 2);
+        assert_eq!(segs[0].sep.as_deref(), Some("|"));
+        assert_eq!(s.rejoin(&segs), "a | b");
     }
 
     #[test]
