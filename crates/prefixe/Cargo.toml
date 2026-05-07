@@ -9,6 +9,9 @@ readme = "../../README.md"
 keywords = ["prefix", "shell", "command", "rx", "wrapper"]
 categories = ["command-line-utilities", "development-tools"]
 
+[features]
+testing = []
+
 [dependencies]
 serde = { workspace = true }
 toml = { workspace = true }

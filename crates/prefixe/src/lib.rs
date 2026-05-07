@@ -6,7 +6,7 @@ pub struct PrefixConfig {
     /// Definite mappings: command (or "cmd sub") → prefix argv.
     #[serde(default)]
     pub mappings: HashMap<String, Vec<String>>,
-    /// Candidate prefixes to try when no mapping exists.
+    /// Candidate prefixes to try in order when no mapping exists.
     #[serde(default)]
     pub candidate_prefixes: Vec<Vec<String>>,
     /// Whether to persist a successful candidate as a confirmed mapping.
@@ -18,7 +18,10 @@ pub struct PrefixConfig {
 pub trait PrefixStore {
     fn load(&self) -> PrefixConfig;
     /// Merge-write: add `key → prefix` to existing mappings without overwriting others.
-    fn confirm_mapping(&self, key: &str, prefix: &[String]);
+    fn confirm_mapping(&self, key: &str, prefix: &[String]) -> Result<(), std::io::Error>;
+    /// Remove a confirmed mapping by key.
+    /// Returns `true` if a mapping was removed, `false` if the key was not found.
+    fn remove_mapping(&self, key: &str) -> Result<bool, std::io::Error>;
 }
 
 /// File-backed implementation reading `~/.config/rx/prefixes.toml`.
@@ -41,54 +44,48 @@ impl FilePrefixStore {
             })
     }
 
-    /// Remove a confirmed mapping by key. No-op if the key does not exist.
-    /// Returns `true` if a mapping was removed, `false` if the key was not found.
-    pub fn remove_mapping(&self, key: &str) -> bool {
-        let mut config = self.load();
-        if config.mappings.remove(key).is_none() {
-            return false;
-        }
-        match toml::to_string_pretty(&config) {
-            Ok(serialized) => {
-                if let Err(e) = std::fs::write(&self.path, &serialized) {
-                    eprintln!(
-                        "prefixe: warn: could not write prefixes to {}: {e}",
-                        self.path.display()
-                    );
-                }
-            }
+    fn load_config(&self) -> PrefixConfig {
+        let content = match std::fs::read_to_string(&self.path) {
+            Ok(c) => c,
+            Err(_) => return PrefixConfig::default(),
+        };
+        match toml::from_str(&content) {
+            Ok(cfg) => cfg,
             Err(e) => {
-                eprintln!("prefixe: warn: could not serialize prefixes: {e}");
+                eprintln!(
+                    "prefixe: warn: could not parse {}: {e}; using empty config",
+                    self.path.display()
+                );
+                PrefixConfig::default()
             }
         }
-        true
+    }
+
+    fn write_config(&self, config: &PrefixConfig) -> Result<(), std::io::Error> {
+        let serialized = toml::to_string_pretty(config)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        std::fs::write(&self.path, serialized)
     }
 }
 
 impl PrefixStore for FilePrefixStore {
     fn load(&self) -> PrefixConfig {
-        let Ok(content) = std::fs::read_to_string(&self.path) else {
-            return PrefixConfig::default();
-        };
-        toml::from_str(&content).unwrap_or_default()
+        self.load_config()
     }
 
-    fn confirm_mapping(&self, key: &str, prefix: &[String]) {
-        let mut config = self.load();
+    fn confirm_mapping(&self, key: &str, prefix: &[String]) -> Result<(), std::io::Error> {
+        let mut config = self.load_config();
         config.mappings.insert(key.to_string(), prefix.to_vec());
-        match toml::to_string_pretty(&config) {
-            Ok(serialized) => {
-                if let Err(e) = std::fs::write(&self.path, &serialized) {
-                    eprintln!(
-                        "prefixe: warn: could not write prefixes to {}: {e}",
-                        self.path.display()
-                    );
-                }
-            }
-            Err(e) => {
-                eprintln!("prefixe: warn: could not serialize prefixes: {e}");
-            }
+        self.write_config(&config)
+    }
+
+    fn remove_mapping(&self, key: &str) -> Result<bool, std::io::Error> {
+        let mut config = self.load_config();
+        if config.mappings.remove(key).is_none() {
+            return Ok(false);
         }
+        self.write_config(&config)?;
+        Ok(true)
     }
 }
 
@@ -106,7 +103,12 @@ pub struct Segment {
 /// Preserves surrounding whitespace in each segment so `rejoin` is lossless.
 /// Does NOT handle quotes — splitting is purely textual, which is correct for
 /// the commands we see in practice (no quoted separators).
+///
+/// When two separators match at the same position, the longer one wins
+/// (e.g. `||` beats `|`).
 pub fn split_segments(cmd: &str) -> Vec<Segment> {
+    // Ordered longest-first so that when two separators start at the same
+    // position the longer one is preferred (|| beats |).
     let seps = ["&&", "||", ";", "|"];
     let mut result = Vec::new();
     let mut remaining = cmd;
@@ -114,10 +116,15 @@ pub fn split_segments(cmd: &str) -> Vec<Segment> {
     'outer: loop {
         let mut earliest: Option<(usize, &str)> = None;
         for sep in &seps {
-            if let Some(pos) = remaining.find(sep)
-                && earliest.is_none_or(|(e, _)| pos < e)
-            {
-                earliest = Some((pos, sep));
+            if let Some(pos) = remaining.find(sep) {
+                let better = match earliest {
+                    None => true,
+                    // Strictly earlier position wins; equal position → longer sep wins.
+                    Some((e, prev)) => pos < e || (pos == e && sep.len() > prev.len()),
+                };
+                if better {
+                    earliest = Some((pos, sep));
+                }
             }
         }
         match earliest {
@@ -168,6 +175,7 @@ pub enum PrefixMatch {
 /// - no mapping or candidate applies
 ///
 /// Two-word key check happens before single-word.
+/// All candidate prefixes are tried in order; the first is returned.
 pub fn lookup_prefix(segment: &str, config: &PrefixConfig) -> Option<PrefixMatch> {
     let trimmed = segment.trim();
     if trimmed.contains("$(") || trimmed.contains('`') {
@@ -195,6 +203,7 @@ pub fn lookup_prefix(segment: &str, config: &PrefixConfig) -> Option<PrefixMatch
         });
     }
 
+    // Try all candidates in order; return the first.
     if let Some(candidate) = config.candidate_prefixes.first() {
         return Some(PrefixMatch::Candidate {
             key: first.to_string(),
@@ -222,6 +231,8 @@ pub struct RewriteResult {
 }
 
 /// Rewrite `cmd` by prepending learned prefixes to each shell segment.
+///
+/// Probes are only recorded when `config.learn_on_successful_fallback` is `true`.
 pub fn rewrite_command(cmd: &str, config: &PrefixConfig) -> RewriteResult {
     let mut segs = split_segments(cmd);
     let mut probes = Vec::new();
@@ -245,7 +256,7 @@ pub fn rewrite_command(cmd: &str, config: &PrefixConfig) -> RewriteResult {
         let prefix_str = prefix.join(" ");
         seg.text = format!("{leading}{prefix_str} {trimmed}{trailing}");
 
-        if is_candidate {
+        if is_candidate && config.learn_on_successful_fallback {
             probes.push(ProbeEntry {
                 key,
                 prefix,
@@ -297,8 +308,8 @@ impl From<ProbeEntryToml> for ProbeEntry {
 /// Port for reading and writing candidate probes.
 pub trait ProbeStore {
     fn load(&self) -> Vec<ProbeEntry>;
-    fn write(&self, entries: &[ProbeEntry]);
-    fn remove_matching(&self, cmd: &str);
+    fn write(&self, entries: &[ProbeEntry]) -> Result<(), std::io::Error>;
+    fn remove_matching(&self, cmd: &str) -> Result<(), std::io::Error>;
 }
 
 /// File-backed probe store at `.ctx/candidates.toml`.
@@ -313,8 +324,10 @@ impl FileProbeStore {
             .unwrap_or_else(|| std::path::Path::new(".ctx").to_path_buf())
             .join("candidates.toml")
     }
+}
 
-    pub fn load(&self) -> Vec<ProbeEntry> {
+impl ProbeStore for FileProbeStore {
+    fn load(&self) -> Vec<ProbeEntry> {
         let Ok(content) = std::fs::read_to_string(&self.path) else {
             return Vec::new();
         };
@@ -326,53 +339,26 @@ impl FileProbeStore {
             .collect()
     }
 
-    pub fn write(&self, entries: &[ProbeEntry]) {
-        if let Some(parent) = self.path.parent()
-            && let Err(e) = std::fs::create_dir_all(parent)
-        {
-            eprintln!(
-                "prefixe: warn: could not create directory {}: {e}",
-                parent.display()
-            );
-            return;
+    fn write(&self, entries: &[ProbeEntry]) -> Result<(), std::io::Error> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
         let file = ProbeFile {
             probes: entries.iter().map(ProbeEntryToml::from).collect(),
         };
-        match toml::to_string_pretty(&file) {
-            Ok(serialized) => {
-                if let Err(e) = std::fs::write(&self.path, &serialized) {
-                    eprintln!(
-                        "prefixe: warn: could not write candidates to {}: {e}",
-                        self.path.display()
-                    );
-                }
-            }
-            Err(e) => {
-                eprintln!("prefixe: warn: could not serialize candidates: {e}");
-            }
-        }
+        let serialized = toml::to_string_pretty(&file)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        std::fs::write(&self.path, serialized)
     }
 
-    pub fn remove_matching(&self, cmd: &str) {
+    fn remove_matching(&self, cmd: &str) -> Result<(), std::io::Error> {
         let mut entries = self.load();
         let before = entries.len();
         entries.retain(|e| e.original_command != cmd);
         if entries.len() < before {
-            self.write(&entries);
+            self.write(&entries)?;
         }
-    }
-}
-
-impl ProbeStore for FileProbeStore {
-    fn load(&self) -> Vec<ProbeEntry> {
-        self.load()
-    }
-    fn write(&self, entries: &[ProbeEntry]) {
-        self.write(entries);
-    }
-    fn remove_matching(&self, cmd: &str) {
-        self.remove_matching(cmd);
+        Ok(())
     }
 }
 
@@ -392,61 +378,96 @@ pub fn audit_state(prefix_store: &dyn PrefixStore, probe_store: &dyn ProbeStore)
     AuditState { mappings, probes }
 }
 
-#[cfg(test)]
-pub struct FakePrefixStore {
-    pub config: PrefixConfig,
-    pub written: std::cell::RefCell<Option<(String, Vec<String>)>>,
-}
+/// Test doubles available to downstream crates under the `testing` feature.
+#[cfg(any(test, feature = "testing"))]
+pub mod testing {
+    use super::*;
 
-#[cfg(test)]
-impl PrefixStore for FakePrefixStore {
-    fn load(&self) -> PrefixConfig {
-        self.config.clone()
+    pub struct FakePrefixStore {
+        pub config: PrefixConfig,
+        pub confirmed: std::cell::RefCell<Option<(String, Vec<String>)>>,
+        pub removed: std::cell::RefCell<Option<String>>,
     }
-    fn confirm_mapping(&self, key: &str, prefix: &[String]) {
-        *self.written.borrow_mut() = Some((key.to_string(), prefix.to_vec()));
-    }
-}
 
-#[cfg(test)]
-pub struct FakeProbeStore {
-    pub entries: std::cell::RefCell<Vec<ProbeEntry>>,
-}
+    impl FakePrefixStore {
+        pub fn new(config: PrefixConfig) -> Self {
+            Self {
+                config,
+                confirmed: std::cell::RefCell::new(None),
+                removed: std::cell::RefCell::new(None),
+            }
+        }
+    }
 
-#[cfg(test)]
-impl ProbeStore for FakeProbeStore {
-    fn load(&self) -> Vec<ProbeEntry> {
-        self.entries.borrow().clone()
+    impl PrefixStore for FakePrefixStore {
+        fn load(&self) -> PrefixConfig {
+            self.config.clone()
+        }
+
+        fn confirm_mapping(&self, key: &str, prefix: &[String]) -> Result<(), std::io::Error> {
+            *self.confirmed.borrow_mut() = Some((key.to_string(), prefix.to_vec()));
+            Ok(())
+        }
+
+        fn remove_mapping(&self, key: &str) -> Result<bool, std::io::Error> {
+            let existed = self.config.mappings.contains_key(key);
+            *self.removed.borrow_mut() = Some(key.to_string());
+            Ok(existed)
+        }
     }
-    fn write(&self, entries: &[ProbeEntry]) {
-        *self.entries.borrow_mut() = entries.to_vec();
+
+    pub struct FakeProbeStore {
+        pub entries: std::cell::RefCell<Vec<ProbeEntry>>,
     }
-    fn remove_matching(&self, cmd: &str) {
-        self.entries
-            .borrow_mut()
-            .retain(|e| e.original_command != cmd);
+
+    impl FakeProbeStore {
+        pub fn new(entries: Vec<ProbeEntry>) -> Self {
+            Self {
+                entries: std::cell::RefCell::new(entries),
+            }
+        }
+
+        pub fn empty() -> Self {
+            Self::new(vec![])
+        }
+    }
+
+    impl ProbeStore for FakeProbeStore {
+        fn load(&self) -> Vec<ProbeEntry> {
+            self.entries.borrow().clone()
+        }
+
+        fn write(&self, entries: &[ProbeEntry]) -> Result<(), std::io::Error> {
+            *self.entries.borrow_mut() = entries.to_vec();
+            Ok(())
+        }
+
+        fn remove_matching(&self, cmd: &str) -> Result<(), std::io::Error> {
+            self.entries
+                .borrow_mut()
+                .retain(|e| e.original_command != cmd);
+            Ok(())
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use testing::{FakePrefixStore, FakeProbeStore};
 
     fn make_store(mappings: &[(&str, &[&str])], candidates: &[&[&str]]) -> FakePrefixStore {
-        FakePrefixStore {
-            config: PrefixConfig {
-                mappings: mappings
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), v.iter().map(|s| s.to_string()).collect()))
-                    .collect(),
-                candidate_prefixes: candidates
-                    .iter()
-                    .map(|c| c.iter().map(|s| s.to_string()).collect())
-                    .collect(),
-                learn_on_successful_fallback: false,
-            },
-            written: std::cell::RefCell::new(None),
-        }
+        FakePrefixStore::new(PrefixConfig {
+            mappings: mappings
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.iter().map(|s| s.to_string()).collect()))
+                .collect(),
+            candidate_prefixes: candidates
+                .iter()
+                .map(|c| c.iter().map(|s| s.to_string()).collect())
+                .collect(),
+            learn_on_successful_fallback: false,
+        })
     }
 
     #[test]
@@ -605,9 +626,21 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_candidate_records_probe() {
+    fn rewrite_candidate_no_probe_when_learn_disabled() {
         let store = make_store(&[], &[&["op", "plugin", "run", "--"]]);
         let r = rewrite_command("gh issue list", &store.load());
+        assert_eq!(r.rewritten, "op plugin run -- gh issue list");
+        assert!(
+            r.probes.is_empty(),
+            "probes should be empty when learn=false"
+        );
+    }
+
+    #[test]
+    fn rewrite_candidate_records_probe_when_learn_enabled() {
+        let mut config = make_store(&[], &[&["op", "plugin", "run", "--"]]).config;
+        config.learn_on_successful_fallback = true;
+        let r = rewrite_command("gh issue list", &config);
         assert_eq!(r.rewritten, "op plugin run -- gh issue list");
         assert_eq!(r.probes.len(), 1);
         assert_eq!(r.probes[0].key, "gh");
@@ -637,7 +670,7 @@ mod tests {
             ],
             original_command: "gh issue list".to_string(),
         }];
-        store.write(&entries);
+        store.write(&entries).unwrap();
         let loaded = store.load();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].key, "gh");
@@ -649,21 +682,79 @@ mod tests {
         let store = FileProbeStore {
             path: dir.path().join("candidates.toml"),
         };
-        store.write(&[
-            ProbeEntry {
-                key: "gh".to_string(),
-                prefix: vec![],
-                original_command: "gh issue list".to_string(),
-            },
-            ProbeEntry {
-                key: "cargo".to_string(),
-                prefix: vec![],
-                original_command: "cargo build".to_string(),
-            },
-        ]);
-        store.remove_matching("gh issue list");
+        store
+            .write(&[
+                ProbeEntry {
+                    key: "gh".to_string(),
+                    prefix: vec![],
+                    original_command: "gh issue list".to_string(),
+                },
+                ProbeEntry {
+                    key: "cargo".to_string(),
+                    prefix: vec![],
+                    original_command: "cargo build".to_string(),
+                },
+            ])
+            .unwrap();
+        store.remove_matching("gh issue list").unwrap();
         let remaining = store.load();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].key, "cargo");
+    }
+
+    #[test]
+    fn prefix_store_confirm_and_remove() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let store = FilePrefixStore {
+            path: dir.path().join("prefixes.toml"),
+        };
+        store
+            .confirm_mapping(
+                "gh",
+                &["op".to_string(), "run".to_string(), "--".to_string()],
+            )
+            .unwrap();
+        let config = store.load();
+        assert!(config.mappings.contains_key("gh"));
+
+        let removed = store.remove_mapping("gh").unwrap();
+        assert!(removed);
+        let config = store.load();
+        assert!(!config.mappings.contains_key("gh"));
+
+        let removed_again = store.remove_mapping("gh").unwrap();
+        assert!(!removed_again);
+    }
+
+    #[test]
+    fn fake_prefix_store_confirm_and_remove() {
+        let store = FakePrefixStore::new(PrefixConfig {
+            mappings: [("gh".to_string(), vec!["op".to_string()])]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        });
+        store
+            .confirm_mapping("cargo", &["dotenvx".to_string()])
+            .unwrap();
+        assert_eq!(store.confirmed.borrow().as_ref().unwrap().0, "cargo");
+        let existed = store.remove_mapping("gh").unwrap();
+        assert!(existed);
+        let missing = store.remove_mapping("missing").unwrap();
+        assert!(!missing);
+    }
+
+    #[test]
+    fn fake_probe_store_round_trip() {
+        let store = FakeProbeStore::empty();
+        let entries = vec![ProbeEntry {
+            key: "gh".to_string(),
+            prefix: vec![],
+            original_command: "gh issue list".to_string(),
+        }];
+        store.write(&entries).unwrap();
+        assert_eq!(store.load().len(), 1);
+        store.remove_matching("gh issue list").unwrap();
+        assert!(store.load().is_empty());
     }
 }
