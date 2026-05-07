@@ -1,0 +1,12 @@
+project: prefixe
+id: prefixe
+updated: 2026-05-07
+items: []
+log:
+  - date: "20260507"
+    summary: "Initial publish session: scaffolded workspace, wrote README, added crates.io metadata (keywords, categories), published v0.1.0. Identified and fixed 8 issues (split_segments || ambiguity, candidate iteration, learn_on_successful_fallback enforcement, Result returns on write methods, remove_mapping on trait, testing feature flag for fakes, FileProbeStore redundancy, TOML parse warning). Published v0.2.0. 19 tests passing."
+    commits:
+      - 79fee50
+      - 8adb69c
+      - 97db441
+    session: 1

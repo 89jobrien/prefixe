@@ -1,3 +1,6 @@
+pub mod error;
+pub use error::Error;
+
 use std::collections::HashMap;
 
 /// Mirrors the `~/.config/rx/prefixes.toml` schema.
@@ -18,10 +21,10 @@ pub struct PrefixConfig {
 pub trait PrefixStore {
     fn load(&self) -> PrefixConfig;
     /// Merge-write: add `key → prefix` to existing mappings without overwriting others.
-    fn confirm_mapping(&self, key: &str, prefix: &[String]) -> Result<(), std::io::Error>;
+    fn confirm_mapping(&self, key: &str, prefix: &[String]) -> Result<(), Error>;
     /// Remove a confirmed mapping by key.
     /// Returns `true` if a mapping was removed, `false` if the key was not found.
-    fn remove_mapping(&self, key: &str) -> Result<bool, std::io::Error>;
+    fn remove_mapping(&self, key: &str) -> Result<bool, Error>;
 }
 
 /// File-backed implementation reading `~/.config/rx/prefixes.toml`.
@@ -61,10 +64,10 @@ impl FilePrefixStore {
         }
     }
 
-    fn write_config(&self, config: &PrefixConfig) -> Result<(), std::io::Error> {
-        let serialized = toml::to_string_pretty(config)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-        std::fs::write(&self.path, serialized)
+    fn write_config(&self, config: &PrefixConfig) -> Result<(), Error> {
+        let serialized = toml::to_string_pretty(config)?;
+        std::fs::write(&self.path, serialized)?;
+        Ok(())
     }
 }
 
@@ -73,13 +76,13 @@ impl PrefixStore for FilePrefixStore {
         self.load_config()
     }
 
-    fn confirm_mapping(&self, key: &str, prefix: &[String]) -> Result<(), std::io::Error> {
+    fn confirm_mapping(&self, key: &str, prefix: &[String]) -> Result<(), Error> {
         let mut config = self.load_config();
         config.mappings.insert(key.to_string(), prefix.to_vec());
         self.write_config(&config)
     }
 
-    fn remove_mapping(&self, key: &str) -> Result<bool, std::io::Error> {
+    fn remove_mapping(&self, key: &str) -> Result<bool, Error> {
         let mut config = self.load_config();
         if config.mappings.remove(key).is_none() {
             return Ok(false);
@@ -308,8 +311,8 @@ impl From<ProbeEntryToml> for ProbeEntry {
 /// Port for reading and writing candidate probes.
 pub trait ProbeStore {
     fn load(&self) -> Vec<ProbeEntry>;
-    fn write(&self, entries: &[ProbeEntry]) -> Result<(), std::io::Error>;
-    fn remove_matching(&self, cmd: &str) -> Result<(), std::io::Error>;
+    fn write(&self, entries: &[ProbeEntry]) -> Result<(), Error>;
+    fn remove_matching(&self, cmd: &str) -> Result<(), Error>;
 }
 
 /// File-backed probe store at `.ctx/candidates.toml`.
@@ -339,19 +342,19 @@ impl ProbeStore for FileProbeStore {
             .collect()
     }
 
-    fn write(&self, entries: &[ProbeEntry]) -> Result<(), std::io::Error> {
+    fn write(&self, entries: &[ProbeEntry]) -> Result<(), Error> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let file = ProbeFile {
             probes: entries.iter().map(ProbeEntryToml::from).collect(),
         };
-        let serialized = toml::to_string_pretty(&file)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
-        std::fs::write(&self.path, serialized)
+        let serialized = toml::to_string_pretty(&file)?;
+        std::fs::write(&self.path, serialized)?;
+        Ok(())
     }
 
-    fn remove_matching(&self, cmd: &str) -> Result<(), std::io::Error> {
+    fn remove_matching(&self, cmd: &str) -> Result<(), Error> {
         let mut entries = self.load();
         let before = entries.len();
         entries.retain(|e| e.original_command != cmd);
@@ -404,12 +407,12 @@ pub mod testing {
             self.config.clone()
         }
 
-        fn confirm_mapping(&self, key: &str, prefix: &[String]) -> Result<(), std::io::Error> {
+        fn confirm_mapping(&self, key: &str, prefix: &[String]) -> Result<(), Error> {
             *self.confirmed.borrow_mut() = Some((key.to_string(), prefix.to_vec()));
             Ok(())
         }
 
-        fn remove_mapping(&self, key: &str) -> Result<bool, std::io::Error> {
+        fn remove_mapping(&self, key: &str) -> Result<bool, Error> {
             let existed = self.config.mappings.contains_key(key);
             *self.removed.borrow_mut() = Some(key.to_string());
             Ok(existed)
@@ -437,12 +440,12 @@ pub mod testing {
             self.entries.borrow().clone()
         }
 
-        fn write(&self, entries: &[ProbeEntry]) -> Result<(), std::io::Error> {
+        fn write(&self, entries: &[ProbeEntry]) -> Result<(), Error> {
             *self.entries.borrow_mut() = entries.to_vec();
             Ok(())
         }
 
-        fn remove_matching(&self, cmd: &str) -> Result<(), std::io::Error> {
+        fn remove_matching(&self, cmd: &str) -> Result<(), Error> {
             self.entries
                 .borrow_mut()
                 .retain(|e| e.original_command != cmd);
