@@ -1,3 +1,13 @@
+use std::collections::HashMap;
+
+/// Pure domain config — no serialization dependencies.
+#[derive(Debug, Clone, Default)]
+pub struct PrefixConfig {
+    pub mappings: HashMap<String, Vec<String>>,
+    pub candidate_prefixes: Vec<Vec<String>>,
+    pub learn_on_successful_fallback: bool,
+}
+
 /// Newtype wrapper for an original (pre-rewrite) shell command string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct OriginalCommand(pub String);

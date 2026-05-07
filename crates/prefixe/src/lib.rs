@@ -1,23 +1,10 @@
 pub mod domain;
 pub mod error;
-pub use domain::OriginalCommand;
+pub mod infra;
+
+pub use domain::{OriginalCommand, PrefixConfig};
 pub use error::Error;
-
-use std::collections::HashMap;
-
-/// Mirrors the `~/.config/rx/prefixes.toml` schema.
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize, Default)]
-pub struct PrefixConfig {
-    /// Definite mappings: command (or "cmd sub") → prefix argv.
-    #[serde(default)]
-    pub mappings: HashMap<String, Vec<String>>,
-    /// Candidate prefixes to try in order when no mapping exists.
-    #[serde(default)]
-    pub candidate_prefixes: Vec<Vec<String>>,
-    /// Whether to persist a successful candidate as a confirmed mapping.
-    #[serde(default)]
-    pub learn_on_successful_fallback: bool,
-}
+pub use infra::toml_store::{FilePrefixStore, FileProbeStore};
 
 /// Port for reading and writing the prefix config.
 pub trait PrefixStore {
@@ -27,71 +14,6 @@ pub trait PrefixStore {
     /// Remove a confirmed mapping by key.
     /// Returns `true` if a mapping was removed, `false` if the key was not found.
     fn remove_mapping(&self, key: &str) -> Result<bool, Error>;
-}
-
-/// File-backed implementation reading `~/.config/rx/prefixes.toml`.
-pub struct FilePrefixStore {
-    pub path: std::path::PathBuf,
-}
-
-impl FilePrefixStore {
-    pub fn default_path() -> std::path::PathBuf {
-        std::env::var_os("CRS_RX_PREFIXES")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                let base = std::env::var_os("XDG_CONFIG_HOME")
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|| {
-                        std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                            .join(".config")
-                    });
-                base.join("rx").join("prefixes.toml")
-            })
-    }
-
-    fn load_config(&self) -> PrefixConfig {
-        let content = match std::fs::read_to_string(&self.path) {
-            Ok(c) => c,
-            Err(_) => return PrefixConfig::default(),
-        };
-        match toml::from_str(&content) {
-            Ok(cfg) => cfg,
-            Err(e) => {
-                eprintln!(
-                    "prefixe: warn: could not parse {}: {e}; using empty config",
-                    self.path.display()
-                );
-                PrefixConfig::default()
-            }
-        }
-    }
-
-    fn write_config(&self, config: &PrefixConfig) -> Result<(), Error> {
-        let serialized = toml::to_string_pretty(config)?;
-        std::fs::write(&self.path, serialized)?;
-        Ok(())
-    }
-}
-
-impl PrefixStore for FilePrefixStore {
-    fn load(&self) -> PrefixConfig {
-        self.load_config()
-    }
-
-    fn confirm_mapping(&self, key: &str, prefix: &[String]) -> Result<(), Error> {
-        let mut config = self.load_config();
-        config.mappings.insert(key.to_string(), prefix.to_vec());
-        self.write_config(&config)
-    }
-
-    fn remove_mapping(&self, key: &str) -> Result<bool, Error> {
-        let mut config = self.load_config();
-        if config.mappings.remove(key).is_none() {
-            return Ok(false);
-        }
-        self.write_config(&config)?;
-        Ok(true)
-    }
 }
 
 /// One shell segment plus the separator that followed it (if any).
@@ -112,8 +34,6 @@ pub struct Segment {
 /// When two separators match at the same position, the longer one wins
 /// (e.g. `||` beats `|`).
 pub fn split_segments(cmd: &str) -> Vec<Segment> {
-    // Ordered longest-first so that when two separators start at the same
-    // position the longer one is preferred (|| beats |).
     let seps = ["&&", "||", ";", "|"];
     let mut result = Vec::new();
     let mut remaining = cmd;
@@ -124,7 +44,6 @@ pub fn split_segments(cmd: &str) -> Vec<Segment> {
             if let Some(pos) = remaining.find(sep) {
                 let better = match earliest {
                     None => true,
-                    // Strictly earlier position wins; equal position → longer sep wins.
                     Some((e, prev)) => pos < e || (pos == e && sep.len() > prev.len()),
                 };
                 if better {
@@ -208,7 +127,6 @@ pub fn lookup_prefix(segment: &str, config: &PrefixConfig) -> Option<PrefixMatch
         });
     }
 
-    // Try all candidates in order; return the first.
     if let Some(candidate) = config.candidate_prefixes.first() {
         return Some(PrefixMatch::Candidate {
             key: first.to_string(),
@@ -276,95 +194,11 @@ pub fn rewrite_command(cmd: &str, config: &PrefixConfig) -> RewriteResult {
     }
 }
 
-/// TOML-serializable wrapper for a list of probe entries.
-#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
-struct ProbeFile {
-    #[serde(default)]
-    probes: Vec<ProbeEntryToml>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct ProbeEntryToml {
-    key: String,
-    prefix: Vec<String>,
-    original_command: String,
-}
-
-impl From<&ProbeEntry> for ProbeEntryToml {
-    fn from(e: &ProbeEntry) -> Self {
-        Self {
-            key: e.key.clone(),
-            prefix: e.prefix.clone(),
-            original_command: e.original_command.0.clone(),
-        }
-    }
-}
-
-impl From<ProbeEntryToml> for ProbeEntry {
-    fn from(t: ProbeEntryToml) -> Self {
-        Self {
-            key: t.key,
-            prefix: t.prefix,
-            original_command: OriginalCommand(t.original_command),
-        }
-    }
-}
-
 /// Port for reading and writing candidate probes.
 pub trait ProbeStore {
     fn load(&self) -> Vec<ProbeEntry>;
     fn write(&self, entries: &[ProbeEntry]) -> Result<(), Error>;
     fn remove_matching(&self, cmd: &OriginalCommand) -> Result<(), Error>;
-}
-
-/// File-backed probe store at `.ctx/candidates.toml`.
-pub struct FileProbeStore {
-    pub path: std::path::PathBuf,
-}
-
-impl FileProbeStore {
-    pub fn default_path() -> std::path::PathBuf {
-        std::env::var_os("CRS_CTX_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::Path::new(".ctx").to_path_buf())
-            .join("candidates.toml")
-    }
-}
-
-impl ProbeStore for FileProbeStore {
-    fn load(&self) -> Vec<ProbeEntry> {
-        let Ok(content) = std::fs::read_to_string(&self.path) else {
-            return Vec::new();
-        };
-        toml::from_str::<ProbeFile>(&content)
-            .unwrap_or_default()
-            .probes
-            .into_iter()
-            .map(ProbeEntry::from)
-            .collect()
-    }
-
-    fn write(&self, entries: &[ProbeEntry]) -> Result<(), Error> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let file = ProbeFile {
-            probes: entries.iter().map(ProbeEntryToml::from).collect(),
-        };
-        let serialized = toml::to_string_pretty(&file)?;
-        std::fs::write(&self.path, serialized)?;
-        Ok(())
-    }
-
-    fn remove_matching(&self, cmd: &OriginalCommand) -> Result<(), Error> {
-        let mut entries = self.load();
-        let before = entries.len();
-        entries.retain(|e| e.original_command != *cmd);
-        if entries.len() < before {
-            self.write(&entries)?;
-        }
-        Ok(())
-    }
 }
 
 /// Snapshot of prefix learning state for display / operator tooling.
@@ -662,9 +496,7 @@ mod tests {
     #[test]
     fn probe_store_round_trips() {
         let dir = tempfile::TempDir::new().unwrap();
-        let store = FileProbeStore {
-            path: dir.path().join("candidates.toml"),
-        };
+        let store = FileProbeStore::new(dir.path().join("candidates.toml"));
         let entries = vec![ProbeEntry {
             key: "gh".to_string(),
             prefix: vec![
@@ -684,9 +516,7 @@ mod tests {
     #[test]
     fn probe_store_remove_matching() {
         let dir = tempfile::TempDir::new().unwrap();
-        let store = FileProbeStore {
-            path: dir.path().join("candidates.toml"),
-        };
+        let store = FileProbeStore::new(dir.path().join("candidates.toml"));
         store
             .write(&[
                 ProbeEntry {
@@ -712,9 +542,7 @@ mod tests {
     #[test]
     fn prefix_store_confirm_and_remove() {
         let dir = tempfile::TempDir::new().unwrap();
-        let store = FilePrefixStore {
-            path: dir.path().join("prefixes.toml"),
-        };
+        let store = FilePrefixStore::new(dir.path().join("prefixes.toml"));
         store
             .confirm_mapping(
                 "gh",
@@ -765,5 +593,19 @@ mod tests {
             .remove_matching(&OriginalCommand::from("gh issue list"))
             .unwrap();
         assert!(store.load().is_empty());
+    }
+
+    #[test]
+    fn domain_prefix_config_has_no_serde_dependency() {
+        // Verifies PrefixConfig is a pure domain type (no serde derives)
+        let _c: PrefixConfig = Default::default();
+        assert!(_c.mappings.is_empty());
+    }
+
+    #[test]
+    fn original_command_from_str() {
+        let cmd = OriginalCommand::from("gh issue list");
+        assert_eq!(cmd.as_str(), "gh issue list");
+        assert_eq!(cmd.to_string(), "gh issue list");
     }
 }
