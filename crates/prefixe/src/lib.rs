@@ -1,4 +1,6 @@
+pub mod domain;
 pub mod error;
+pub use domain::OriginalCommand;
 pub use error::Error;
 
 use std::collections::HashMap;
@@ -223,7 +225,7 @@ pub fn lookup_prefix(segment: &str, config: &PrefixConfig) -> Option<PrefixMatch
 pub struct ProbeEntry {
     pub key: String,
     pub prefix: Vec<String>,
-    pub original_command: String,
+    pub original_command: OriginalCommand,
 }
 
 /// Result of rewriting a full command string.
@@ -263,7 +265,7 @@ pub fn rewrite_command(cmd: &str, config: &PrefixConfig) -> RewriteResult {
             probes.push(ProbeEntry {
                 key,
                 prefix,
-                original_command: cmd.to_string(),
+                original_command: OriginalCommand::from(cmd),
             });
         }
     }
@@ -293,7 +295,7 @@ impl From<&ProbeEntry> for ProbeEntryToml {
         Self {
             key: e.key.clone(),
             prefix: e.prefix.clone(),
-            original_command: e.original_command.clone(),
+            original_command: e.original_command.0.clone(),
         }
     }
 }
@@ -303,7 +305,7 @@ impl From<ProbeEntryToml> for ProbeEntry {
         Self {
             key: t.key,
             prefix: t.prefix,
-            original_command: t.original_command,
+            original_command: OriginalCommand(t.original_command),
         }
     }
 }
@@ -312,7 +314,7 @@ impl From<ProbeEntryToml> for ProbeEntry {
 pub trait ProbeStore {
     fn load(&self) -> Vec<ProbeEntry>;
     fn write(&self, entries: &[ProbeEntry]) -> Result<(), Error>;
-    fn remove_matching(&self, cmd: &str) -> Result<(), Error>;
+    fn remove_matching(&self, cmd: &OriginalCommand) -> Result<(), Error>;
 }
 
 /// File-backed probe store at `.ctx/candidates.toml`.
@@ -354,10 +356,10 @@ impl ProbeStore for FileProbeStore {
         Ok(())
     }
 
-    fn remove_matching(&self, cmd: &str) -> Result<(), Error> {
+    fn remove_matching(&self, cmd: &OriginalCommand) -> Result<(), Error> {
         let mut entries = self.load();
         let before = entries.len();
-        entries.retain(|e| e.original_command != cmd);
+        entries.retain(|e| e.original_command != *cmd);
         if entries.len() < before {
             self.write(&entries)?;
         }
@@ -445,10 +447,10 @@ pub mod testing {
             Ok(())
         }
 
-        fn remove_matching(&self, cmd: &str) -> Result<(), Error> {
+        fn remove_matching(&self, cmd: &OriginalCommand) -> Result<(), Error> {
             self.entries
                 .borrow_mut()
-                .retain(|e| e.original_command != cmd);
+                .retain(|e| e.original_command != *cmd);
             Ok(())
         }
     }
@@ -671,7 +673,7 @@ mod tests {
                 "run".to_string(),
                 "--".to_string(),
             ],
-            original_command: "gh issue list".to_string(),
+            original_command: OriginalCommand::from("gh issue list"),
         }];
         store.write(&entries).unwrap();
         let loaded = store.load();
@@ -690,16 +692,18 @@ mod tests {
                 ProbeEntry {
                     key: "gh".to_string(),
                     prefix: vec![],
-                    original_command: "gh issue list".to_string(),
+                    original_command: OriginalCommand::from("gh issue list"),
                 },
                 ProbeEntry {
                     key: "cargo".to_string(),
                     prefix: vec![],
-                    original_command: "cargo build".to_string(),
+                    original_command: OriginalCommand::from("cargo build"),
                 },
             ])
             .unwrap();
-        store.remove_matching("gh issue list").unwrap();
+        store
+            .remove_matching(&OriginalCommand::from("gh issue list"))
+            .unwrap();
         let remaining = store.load();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].key, "cargo");
@@ -753,11 +757,13 @@ mod tests {
         let entries = vec![ProbeEntry {
             key: "gh".to_string(),
             prefix: vec![],
-            original_command: "gh issue list".to_string(),
+            original_command: OriginalCommand::from("gh issue list"),
         }];
         store.write(&entries).unwrap();
         assert_eq!(store.load().len(), 1);
-        store.remove_matching("gh issue list").unwrap();
+        store
+            .remove_matching(&OriginalCommand::from("gh issue list"))
+            .unwrap();
         assert!(store.load().is_empty());
     }
 }
