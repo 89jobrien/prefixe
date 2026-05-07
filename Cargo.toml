@@ -1,0 +1,15 @@
+[workspace]
+members = ["crates/prefixe"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/89jobrien/prefixe"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+shell-words = "1"
+tempfile = "3"
