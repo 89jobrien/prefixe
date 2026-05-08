@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/prefixe"]
+members = ["crates/prefixe", "crates/prefixe-cli"]
 resolver = "2"
 
 [workspace.package]
