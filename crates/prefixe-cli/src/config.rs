@@ -38,6 +38,7 @@ pub fn load_store(path: PathBuf) -> Result<FilePrefixStore, ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prefixe::PrefixStore as _;
     use std::io::Write as _;
 
     #[test]
