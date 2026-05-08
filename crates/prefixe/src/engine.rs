@@ -1,6 +1,7 @@
 use crate::{
     AuditState, Error, PrefixStore, ProbeStore, RewriteResult, audit_state,
-    domain::CommandRewriter, rewrite_command,
+    domain::{CommandRewriter, PrefixRule, RuleCondition},
+    rejoin, rewrite_command, split_segments,
 };
 
 /// Encapsulates `PrefixStore` + `ProbeStore` and exposes the full use-case API.
@@ -40,6 +41,94 @@ impl<P: PrefixStore, Q: ProbeStore> PrefixEngine<P, Q> {
     /// Remove a confirmed mapping. Returns `true` if it existed.
     pub fn forget(&self, key: &str) -> Result<bool, Error> {
         self.prefix_store.remove_mapping(key)
+    }
+
+    /// Evaluate a slice of conditions (AND semantics). Returns `true` if all
+    /// conditions hold, or the slice is empty.
+    pub fn evaluate_conditions(&self, conditions: &[RuleCondition]) -> bool {
+        conditions.iter().all(|c| match c {
+            RuleCondition::EnvVarSet(var) => std::env::var_os(var).is_some(),
+            RuleCondition::CwdGlob(pattern) => {
+                let Ok(cwd) = std::env::current_dir() else {
+                    return false;
+                };
+                let cwd_str = cwd.to_string_lossy();
+                glob::Pattern::new(pattern)
+                    .map(|p| p.matches(&cwd_str))
+                    .unwrap_or(false)
+            }
+            RuleCondition::GitRoot => {
+                let Ok(cwd) = std::env::current_dir() else {
+                    return false;
+                };
+                let mut dir = cwd.as_path();
+                loop {
+                    if dir.join(".git").exists() {
+                        return true;
+                    }
+                    match dir.parent() {
+                        Some(p) => dir = p,
+                        None => return false,
+                    }
+                }
+            }
+        })
+    }
+
+    /// Rewrite `cmd` using an explicit, ordered list of [`PrefixRule`]s.
+    ///
+    /// Rules are sorted by descending priority (stable sort preserves definition
+    /// order for ties). The first rule whose `key` matches the leading word(s)
+    /// of a segment *and* whose conditions all pass is applied; no further rules
+    /// for that segment are tried.
+    pub fn rewrite_with_rules(&self, cmd: &str, rules: &[PrefixRule]) -> RewriteResult {
+        // Stable sort: higher priority first, ties keep original order.
+        let mut sorted: Vec<&PrefixRule> = rules.iter().collect();
+        sorted.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+        let mut segs = split_segments(cmd);
+        let probes = Vec::new();
+
+        for seg in &mut segs {
+            let trimmed = seg.text.trim();
+            if trimmed.is_empty() || trimmed.contains("$(") || trimmed.contains('`') {
+                continue;
+            }
+            let tokens = match shell_words::split(trimmed) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            let first = match tokens.first() {
+                Some(t) => t.as_str(),
+                None => continue,
+            };
+            let second = tokens.get(1).map(|s| s.as_str());
+
+            // Find first matching rule.
+            let matched = sorted.iter().find(|r| {
+                let key_matches = if let Some(sec) = second {
+                    let two = format!("{first} {sec}");
+                    r.key == two || r.key == first
+                } else {
+                    r.key == first
+                };
+                key_matches && self.evaluate_conditions(&r.conditions)
+            });
+
+            if let Some(rule) = matched {
+                let leading_len = seg.text.len() - seg.text.trim_start().len();
+                let leading = &seg.text[..leading_len];
+                let trailing_start = leading_len + trimmed.len();
+                let trailing = &seg.text[trailing_start..];
+                let prefix_str = rule.prefix.join(" ");
+                seg.text = format!("{leading}{prefix_str} {trimmed}{trailing}");
+            }
+        }
+
+        RewriteResult {
+            rewritten: rejoin(&segs),
+            probes,
+        }
     }
 }
 

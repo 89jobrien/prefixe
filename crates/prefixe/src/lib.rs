@@ -4,7 +4,8 @@ pub mod error;
 pub mod infra;
 
 pub use domain::{
-    CommandRewriter, CommandSplitter, OriginalCommand, PrefixConfig, TextualSplitter,
+    CommandRewriter, CommandSplitter, OriginalCommand, PrefixConfig, PrefixRule, RuleCondition,
+    TextualSplitter,
 };
 pub use engine::PrefixEngine;
 pub use error::Error;
@@ -767,5 +768,218 @@ mod tests {
         let cmd = OriginalCommand::from("gh issue list");
         assert_eq!(cmd.as_str(), "gh issue list");
         assert_eq!(cmd.to_string(), "gh issue list");
+    }
+
+    // ── Issue #20: conditional prefix rules ──────────────────────────────────
+
+    #[test]
+    fn rule_with_no_conditions_always_applies() {
+        use crate::PrefixEngine;
+        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::testing::{FakePrefixStore, FakeProbeStore};
+
+        let rule = PrefixRule {
+            key: "gh".to_string(),
+            prefix: vec!["op".to_string(), "run".to_string(), "--".to_string()],
+            conditions: vec![],
+            priority: 0,
+        };
+        let store = FakePrefixStore::new(PrefixConfig::default());
+        let engine = PrefixEngine::new(store, FakeProbeStore::empty());
+        assert!(engine.evaluate_conditions(&rule.conditions));
+    }
+
+    #[test]
+    fn env_var_set_condition_passes_when_var_present() {
+        use crate::PrefixEngine;
+        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::testing::{FakePrefixStore, FakeProbeStore};
+
+        unsafe { std::env::set_var("PREFIXE_TEST_VAR_20", "1") };
+        let rule = PrefixRule {
+            key: "gh".to_string(),
+            prefix: vec![],
+            conditions: vec![RuleCondition::EnvVarSet("PREFIXE_TEST_VAR_20".to_string())],
+            priority: 0,
+        };
+        let store = FakePrefixStore::new(PrefixConfig::default());
+        let engine = PrefixEngine::new(store, FakeProbeStore::empty());
+        assert!(engine.evaluate_conditions(&rule.conditions));
+        unsafe { std::env::remove_var("PREFIXE_TEST_VAR_20") };
+    }
+
+    #[test]
+    fn env_var_set_condition_fails_when_var_absent() {
+        use crate::PrefixEngine;
+        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::testing::{FakePrefixStore, FakeProbeStore};
+
+        unsafe { std::env::remove_var("PREFIXE_TEST_VAR_ABSENT_20") };
+        let rule = PrefixRule {
+            key: "gh".to_string(),
+            prefix: vec![],
+            conditions: vec![RuleCondition::EnvVarSet(
+                "PREFIXE_TEST_VAR_ABSENT_20".to_string(),
+            )],
+            priority: 0,
+        };
+        let store = FakePrefixStore::new(PrefixConfig::default());
+        let engine = PrefixEngine::new(store, FakeProbeStore::empty());
+        assert!(!engine.evaluate_conditions(&rule.conditions));
+    }
+
+    #[test]
+    fn cwd_glob_condition_matches_current_dir() {
+        use crate::PrefixEngine;
+        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::testing::{FakePrefixStore, FakeProbeStore};
+
+        let rule = PrefixRule {
+            key: "gh".to_string(),
+            prefix: vec![],
+            conditions: vec![RuleCondition::CwdGlob("*".to_string())],
+            priority: 0,
+        };
+        let store = FakePrefixStore::new(PrefixConfig::default());
+        let engine = PrefixEngine::new(store, FakeProbeStore::empty());
+        // "*" matches any single path component
+        assert!(engine.evaluate_conditions(&rule.conditions));
+    }
+
+    #[test]
+    fn git_root_condition_true_inside_repo() {
+        use crate::PrefixEngine;
+        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::testing::{FakePrefixStore, FakeProbeStore};
+
+        let rule = PrefixRule {
+            key: "gh".to_string(),
+            prefix: vec![],
+            conditions: vec![RuleCondition::GitRoot],
+            priority: 0,
+        };
+        let store = FakePrefixStore::new(PrefixConfig::default());
+        let engine = PrefixEngine::new(store, FakeProbeStore::empty());
+        // The worktree itself is inside a git repo
+        assert!(engine.evaluate_conditions(&rule.conditions));
+    }
+
+    #[test]
+    fn engine_rewrite_with_rules_applies_matching_rule() {
+        use crate::PrefixEngine;
+        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::testing::{FakePrefixStore, FakeProbeStore};
+
+        let rules = vec![PrefixRule {
+            key: "gh".to_string(),
+            prefix: vec!["op".to_string(), "run".to_string(), "--".to_string()],
+            conditions: vec![],
+            priority: 0,
+        }];
+        let store = FakePrefixStore::new(PrefixConfig::default());
+        let engine = PrefixEngine::new(store, FakeProbeStore::empty());
+        let r = engine.rewrite_with_rules("gh issue list", &rules);
+        assert_eq!(r.rewritten, "op run -- gh issue list");
+    }
+
+    #[test]
+    fn engine_rewrite_with_rules_skips_unmatched_condition() {
+        use crate::PrefixEngine;
+        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::testing::{FakePrefixStore, FakeProbeStore};
+
+        unsafe { std::env::remove_var("PREFIXE_NEVER_SET_VAR") };
+        let rules = vec![PrefixRule {
+            key: "gh".to_string(),
+            prefix: vec!["op".to_string(), "run".to_string(), "--".to_string()],
+            conditions: vec![RuleCondition::EnvVarSet(
+                "PREFIXE_NEVER_SET_VAR".to_string(),
+            )],
+            priority: 0,
+        }];
+        let store = FakePrefixStore::new(PrefixConfig::default());
+        let engine = PrefixEngine::new(store, FakeProbeStore::empty());
+        let r = engine.rewrite_with_rules("gh issue list", &rules);
+        assert_eq!(r.rewritten, "gh issue list");
+    }
+
+    // ── Issue #21: priority ordering ─────────────────────────────────────────
+
+    #[test]
+    fn higher_priority_rule_wins() {
+        use crate::PrefixEngine;
+        use crate::domain::PrefixRule;
+        use crate::testing::{FakePrefixStore, FakeProbeStore};
+
+        let rules = vec![
+            PrefixRule {
+                key: "gh".to_string(),
+                prefix: vec!["low".to_string()],
+                conditions: vec![],
+                priority: 0,
+            },
+            PrefixRule {
+                key: "gh".to_string(),
+                prefix: vec!["high".to_string()],
+                conditions: vec![],
+                priority: 10,
+            },
+        ];
+        let store = FakePrefixStore::new(PrefixConfig::default());
+        let engine = PrefixEngine::new(store, FakeProbeStore::empty());
+        let r = engine.rewrite_with_rules("gh issue list", &rules);
+        assert_eq!(r.rewritten, "high gh issue list");
+    }
+
+    #[test]
+    fn equal_priority_preserves_definition_order() {
+        use crate::PrefixEngine;
+        use crate::domain::PrefixRule;
+        use crate::testing::{FakePrefixStore, FakeProbeStore};
+
+        let rules = vec![
+            PrefixRule {
+                key: "gh".to_string(),
+                prefix: vec!["first".to_string()],
+                conditions: vec![],
+                priority: 5,
+            },
+            PrefixRule {
+                key: "gh".to_string(),
+                prefix: vec!["second".to_string()],
+                conditions: vec![],
+                priority: 5,
+            },
+        ];
+        let store = FakePrefixStore::new(PrefixConfig::default());
+        let engine = PrefixEngine::new(store, FakeProbeStore::empty());
+        let r = engine.rewrite_with_rules("gh issue list", &rules);
+        assert_eq!(r.rewritten, "first gh issue list");
+    }
+
+    #[test]
+    fn first_match_wins_no_further_rules_evaluated() {
+        use crate::PrefixEngine;
+        use crate::domain::PrefixRule;
+        use crate::testing::{FakePrefixStore, FakeProbeStore};
+
+        let rules = vec![
+            PrefixRule {
+                key: "gh".to_string(),
+                prefix: vec!["winner".to_string()],
+                conditions: vec![],
+                priority: 1,
+            },
+            PrefixRule {
+                key: "gh".to_string(),
+                prefix: vec!["loser".to_string()],
+                conditions: vec![],
+                priority: 0,
+            },
+        ];
+        let store = FakePrefixStore::new(PrefixConfig::default());
+        let engine = PrefixEngine::new(store, FakeProbeStore::empty());
+        let r = engine.rewrite_with_rules("gh issue list", &rules);
+        assert_eq!(r.rewritten, "winner gh issue list");
     }
 }

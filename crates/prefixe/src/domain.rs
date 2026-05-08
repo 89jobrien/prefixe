@@ -1,5 +1,35 @@
 use std::collections::HashMap;
 
+/// A single condition that must hold for a [`PrefixRule`] to be evaluated.
+///
+/// All conditions in a rule are AND-combined.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuleCondition {
+    /// The named environment variable is set (non-empty value).
+    EnvVarSet(String),
+    /// The current working directory matches the given glob pattern.
+    CwdGlob(String),
+    /// The process is running inside a git repository (any `.git` ancestor).
+    GitRoot,
+}
+
+/// A prefix rule with an optional key-specific prefix, conditions, and priority.
+///
+/// Rules are evaluated in descending priority order; the first matching rule
+/// for a given command word wins.
+#[derive(Debug, Clone)]
+pub struct PrefixRule {
+    /// The command word (or two-word phrase) this rule targets.
+    pub key: String,
+    /// Prefix tokens to prepend when this rule matches.
+    pub prefix: Vec<String>,
+    /// Conditions that must ALL be true for this rule to apply.
+    /// An empty list means the rule always applies.
+    pub conditions: Vec<RuleCondition>,
+    /// Evaluation order: higher values are tried first. Default is `0`.
+    pub priority: u32,
+}
+
 /// Pure domain config — no serialization dependencies.
 #[derive(Debug, Clone, Default)]
 pub struct PrefixConfig {
