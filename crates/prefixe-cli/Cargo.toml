@@ -1,0 +1,20 @@
+[package]
+name = "prefixe-cli"
+description = "CLI binary for the prefixe command-rewriting system"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "prefixe"
+path = "src/main.rs"
+
+[dependencies]
+prefixe = { path = "../prefixe" }
+toml = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
