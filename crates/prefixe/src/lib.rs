@@ -13,6 +13,26 @@ pub use infra::path::{EnvPathResolver, PathResolver};
 pub use infra::toml_store::{FilePrefixStore, FileProbeStore};
 
 /// Port for reading and writing the prefix config.
+///
+/// Implement this trait to supply a custom persistence layer.  The canonical
+/// adapter is [`FilePrefixStore`]; use `testing::FakePrefixStore` in tests.
+///
+/// # Examples
+///
+/// ```
+/// use prefixe::{PrefixConfig, PrefixStore, Error};
+///
+/// struct AlwaysEmptyStore;
+///
+/// impl PrefixStore for AlwaysEmptyStore {
+///     fn load(&self) -> PrefixConfig { PrefixConfig::default() }
+///     fn confirm_mapping(&self, _key: &str, _prefix: &[String]) -> Result<(), Error> { Ok(()) }
+///     fn remove_mapping(&self, _key: &str) -> Result<bool, Error> { Ok(false) }
+/// }
+///
+/// let store = AlwaysEmptyStore;
+/// assert!(store.load().mappings.is_empty());
+/// ```
 pub trait PrefixStore {
     fn load(&self) -> PrefixConfig;
     /// Merge-write: add `key → prefix` to existing mappings without overwriting others.
@@ -23,6 +43,15 @@ pub trait PrefixStore {
 }
 
 /// One shell segment plus the separator that followed it (if any).
+///
+/// # Examples
+///
+/// ```
+/// use prefixe::Segment;
+///
+/// let seg = Segment { text: "cargo build ".to_string(), sep: Some("|".to_string()) };
+/// assert_eq!(seg.sep.as_deref(), Some("|"));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct Segment {
     /// The raw text of this segment (may have leading/trailing spaces).
@@ -39,6 +68,17 @@ pub struct Segment {
 ///
 /// When two separators match at the same position, the longer one wins
 /// (e.g. `||` beats `|`).
+///
+/// # Examples
+///
+/// ```
+/// use prefixe::split_segments;
+///
+/// let segs = split_segments("cargo build | tail -5");
+/// assert_eq!(segs.len(), 2);
+/// assert_eq!(segs[0].sep.as_deref(), Some("|"));
+/// assert_eq!(segs[1].sep, None);
+/// ```
 pub fn split_segments(cmd: &str) -> Vec<Segment> {
     let seps = ["&&", "||", ";", "|"];
     let mut result = Vec::new();
@@ -78,6 +118,17 @@ pub fn split_segments(cmd: &str) -> Vec<Segment> {
 }
 
 /// Reconstruct the original command string from segments.
+///
+/// This is the inverse of [`split_segments`] and is lossless for all inputs.
+///
+/// # Examples
+///
+/// ```
+/// use prefixe::{rejoin, split_segments};
+///
+/// let cmd = "git add -A && git commit -m 'msg'";
+/// assert_eq!(rejoin(&split_segments(cmd)), cmd);
+/// ```
 pub fn rejoin(segs: &[Segment]) -> String {
     let mut out = String::new();
     for seg in segs {
@@ -90,6 +141,20 @@ pub fn rejoin(segs: &[Segment]) -> String {
 }
 
 /// Result of a prefix lookup for a single segment's base command.
+///
+/// # Examples
+///
+/// ```
+/// use prefixe::{PrefixConfig, PrefixMatch, lookup_prefix};
+///
+/// let config = PrefixConfig {
+///     mappings: [("gh".to_string(), vec!["op".to_string()])]
+///         .into_iter()
+///         .collect(),
+///     ..Default::default()
+/// };
+/// assert!(matches!(lookup_prefix("gh issue list", &config), Some(PrefixMatch::Confirmed { .. })));
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub enum PrefixMatch {
     /// A definite mapping exists in `mappings`.
@@ -106,6 +171,16 @@ pub enum PrefixMatch {
 ///
 /// Two-word key check happens before single-word.
 /// All candidate prefixes are tried in order; the first is returned.
+///
+/// # Examples
+///
+/// ```
+/// use prefixe::{PrefixConfig, PrefixMatch, lookup_prefix};
+///
+/// let config = PrefixConfig::default();
+/// assert_eq!(lookup_prefix("echo hello", &config), None);
+/// assert_eq!(lookup_prefix("$(cmd)", &config), None);
+/// ```
 pub fn lookup_prefix(segment: &str, config: &PrefixConfig) -> Option<PrefixMatch> {
     let trimmed = segment.trim();
     if trimmed.contains("$(") || trimmed.contains('`') {
@@ -145,6 +220,19 @@ pub fn lookup_prefix(segment: &str, config: &PrefixConfig) -> Option<PrefixMatch
 
 /// A pending candidate probe: we applied a speculative prefix and need post-hook
 /// learning to confirm or discard it.
+///
+/// # Examples
+///
+/// ```
+/// use prefixe::{OriginalCommand, ProbeEntry};
+///
+/// let entry = ProbeEntry {
+///     key: "gh".to_string(),
+///     prefix: vec!["op".to_string()],
+///     original_command: OriginalCommand::from("gh issue list"),
+/// };
+/// assert_eq!(entry.key, "gh");
+/// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProbeEntry {
     pub key: String,
@@ -153,6 +241,17 @@ pub struct ProbeEntry {
 }
 
 /// Result of rewriting a full command string.
+///
+/// # Examples
+///
+/// ```
+/// use prefixe::{PrefixConfig, rewrite_command};
+///
+/// let config = PrefixConfig::default();
+/// let result = rewrite_command("echo hi", &config);
+/// assert_eq!(result.rewritten, "echo hi");
+/// assert!(result.probes.is_empty());
+/// ```
 #[derive(Debug, Clone)]
 pub struct RewriteResult {
     pub rewritten: String,
@@ -163,6 +262,22 @@ pub struct RewriteResult {
 ///
 /// Prefer this over `rewrite_command` when you have a `PrefixStore` port.
 /// For full use-case orchestration, use [`PrefixEngine`] instead.
+///
+/// # Examples
+///
+/// ```
+/// use prefixe::{PrefixConfig, PrefixStore, Error, rewrite_via_store};
+///
+/// struct EmptyStore;
+/// impl PrefixStore for EmptyStore {
+///     fn load(&self) -> PrefixConfig { PrefixConfig::default() }
+///     fn confirm_mapping(&self, _: &str, _: &[String]) -> Result<(), Error> { Ok(()) }
+///     fn remove_mapping(&self, _: &str) -> Result<bool, Error> { Ok(false) }
+/// }
+///
+/// let result = rewrite_via_store("echo hello", &EmptyStore);
+/// assert_eq!(result.rewritten, "echo hello");
+/// ```
 pub fn rewrite_via_store(cmd: &str, store: &dyn PrefixStore) -> RewriteResult {
     rewrite_command(cmd, &store.load())
 }
@@ -171,6 +286,18 @@ pub fn rewrite_via_store(cmd: &str, store: &dyn PrefixStore) -> RewriteResult {
 ///
 /// Probes are only recorded when `config.learn_on_successful_fallback` is `true`.
 /// Prefer [`rewrite_via_store`] or [`PrefixEngine::rewrite`] in application code.
+///
+/// # Examples
+///
+/// ```
+/// use prefixe::{PrefixConfig, rewrite_command};
+///
+/// let mut config = PrefixConfig::default();
+/// config.mappings.insert("gh".to_string(), vec!["op".to_string(), "run".to_string(), "--".to_string()]);
+///
+/// let result = rewrite_command("gh issue list", &config);
+/// assert_eq!(result.rewritten, "op run -- gh issue list");
+/// ```
 pub fn rewrite_command(cmd: &str, config: &PrefixConfig) -> RewriteResult {
     let mut segs = split_segments(cmd);
     let mut probes = Vec::new();
@@ -210,6 +337,23 @@ pub fn rewrite_command(cmd: &str, config: &PrefixConfig) -> RewriteResult {
 }
 
 /// Port for reading and writing candidate probes.
+///
+/// # Examples
+///
+/// ```
+/// use prefixe::{Error, ProbeEntry, ProbeStore, OriginalCommand};
+///
+/// struct NoOpProbeStore;
+///
+/// impl ProbeStore for NoOpProbeStore {
+///     fn load(&self) -> Vec<ProbeEntry> { vec![] }
+///     fn write(&self, _entries: &[ProbeEntry]) -> Result<(), Error> { Ok(()) }
+///     fn remove_matching(&self, _cmd: &OriginalCommand) -> Result<(), Error> { Ok(()) }
+/// }
+///
+/// let store = NoOpProbeStore;
+/// assert!(store.load().is_empty());
+/// ```
 pub trait ProbeStore {
     fn load(&self) -> Vec<ProbeEntry>;
     fn write(&self, entries: &[ProbeEntry]) -> Result<(), Error>;
@@ -217,6 +361,16 @@ pub trait ProbeStore {
 }
 
 /// Snapshot of prefix learning state for display / operator tooling.
+///
+/// # Examples
+///
+/// ```
+/// use prefixe::AuditState;
+///
+/// let state = AuditState::default();
+/// assert!(state.mappings.is_empty());
+/// assert!(state.probes.is_empty());
+/// ```
 #[derive(Debug, Clone, Default)]
 pub struct AuditState {
     pub mappings: Vec<(String, Vec<String>)>,
@@ -224,6 +378,30 @@ pub struct AuditState {
 }
 
 /// Assemble the current prefix learning state from both stores.
+///
+/// # Examples
+///
+/// ```
+/// use prefixe::{AuditState, Error, OriginalCommand, PrefixConfig, PrefixStore,
+///               ProbeEntry, ProbeStore, audit_state};
+///
+/// struct EmptyPrefixStore;
+/// impl PrefixStore for EmptyPrefixStore {
+///     fn load(&self) -> PrefixConfig { PrefixConfig::default() }
+///     fn confirm_mapping(&self, _: &str, _: &[String]) -> Result<(), Error> { Ok(()) }
+///     fn remove_mapping(&self, _: &str) -> Result<bool, Error> { Ok(false) }
+/// }
+///
+/// struct EmptyProbeStore;
+/// impl ProbeStore for EmptyProbeStore {
+///     fn load(&self) -> Vec<ProbeEntry> { vec![] }
+///     fn write(&self, _: &[ProbeEntry]) -> Result<(), Error> { Ok(()) }
+///     fn remove_matching(&self, _: &OriginalCommand) -> Result<(), Error> { Ok(()) }
+/// }
+///
+/// let state = audit_state(&EmptyPrefixStore, &EmptyProbeStore);
+/// assert!(state.mappings.is_empty());
+/// ```
 pub fn audit_state(prefix_store: &dyn PrefixStore, probe_store: &dyn ProbeStore) -> AuditState {
     let config = prefix_store.load();
     let mut mappings: Vec<(String, Vec<String>)> = config.mappings.into_iter().collect();

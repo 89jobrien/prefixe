@@ -1,0 +1,8 @@
+[book]
+title = "prefixe"
+authors = ["Joseph O'Brien"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/89jobrien/prefixe"

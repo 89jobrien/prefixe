@@ -79,6 +79,18 @@ impl From<ProbeEntryToml> for ProbeEntry {
 // ── FilePrefixStore ──────────────────────────────────────────────────────────
 
 /// File-backed implementation reading `~/.config/rx/prefixes.toml`.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::PathBuf;
+/// use prefixe::{FilePrefixStore, PrefixStore};
+///
+/// let store = FilePrefixStore::new(PathBuf::from("/tmp/nonexistent-prefixes.toml"));
+/// // Missing file returns an empty config without panicking.
+/// let config = store.load();
+/// assert!(config.mappings.is_empty());
+/// ```
 pub struct FilePrefixStore {
     pub path: PathBuf,
 }
@@ -154,6 +166,17 @@ impl PrefixStore for FilePrefixStore {
 // ── FileProbeStore ───────────────────────────────────────────────────────────
 
 /// File-backed probe store at `.ctx/candidates.toml`.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::PathBuf;
+/// use prefixe::{FileProbeStore, ProbeStore};
+///
+/// let store = FileProbeStore::new(PathBuf::from("/tmp/nonexistent-candidates.toml"));
+/// // Missing file returns an empty list without panicking.
+/// assert!(store.load().is_empty());
+/// ```
 pub struct FileProbeStore {
     pub path: PathBuf,
 }
