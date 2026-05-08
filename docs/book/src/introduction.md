@@ -1,25 +1,22 @@
 # prefixe
 
-Prepend validated prefixes to shell commands, with support for confirmed mappings and
-speculative candidate learning.
+`prefixe` is a Rust library that prepends validated prefixes to shell commands.
 
-Designed as the core library for [`coursers`](https://github.com/89jobrien/coursers) /
-`rx` prefix config integration.
+It supports confirmed mappings (stored in a TOML config) and speculative candidate
+learning for commands not yet explicitly mapped.
 
-## What it does
+## Quick start
 
-- Reads a TOML prefix config (`~/.config/rx/prefixes.toml` by default)
-- Rewrites shell command strings by prepending a known prefix to each segment
-- Supports compound commands split on `&&`, `||`, `;`, `|`
-- Tracks speculative "candidate" probes for learning new mappings on success
-- Exposes `PrefixStore` and `ProbeStore` traits for easy testing and substitution
-
-## Usage
+```toml
+# Cargo.toml
+[dependencies]
+prefixe = "0.3"
+```
 
 ```rust
 use prefixe::{FilePrefixStore, PrefixStore, rewrite_command};
 
-let store = FilePrefixStore { path: FilePrefixStore::default_path() };
+let store = FilePrefixStore::new(FilePrefixStore::default_path());
 let config = store.load();
 let result = rewrite_command("gh issue list && gh pr list", &config);
 println!("{}", result.rewritten);
@@ -35,7 +32,6 @@ println!("{}", result.rewritten);
 gh = ["op", "plugin", "run", "--"]
 "cargo test" = ["dotenvx", "run", "--"]
 
-[[candidate_prefixes]]
 candidate_prefixes = [["op", "run", "--"]]
 
 learn_on_successful_fallback = true
@@ -47,12 +43,3 @@ learn_on_successful_fallback = true
 | ----------------- | ----------------------------------- | --------------------------- |
 | `CRS_RX_PREFIXES` | `$XDG_CONFIG_HOME/rx/prefixes.toml` | Override prefix config path |
 | `CRS_CTX_DIR`     | `.ctx`                              | Directory for probe state   |
-
-## Documentation
-
-- [API docs (docs.rs)](https://docs.rs/prefixe)
-- [Book](docs/book/src/introduction.md) — mdBook scaffold in `docs/book/`
-
-## License
-
-MIT OR Apache-2.0
