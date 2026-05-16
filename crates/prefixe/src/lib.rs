@@ -12,7 +12,7 @@ pub use domain::{
 pub use engine::PrefixEngine;
 pub use error::Error;
 pub use infra::path::{EnvPathResolver, PathResolver};
-pub use infra::toml_store::{FilePrefixStore, FileProbeStore};
+pub use infra::toml_store::{FilePrefixStore, FileProbeStore, FileStatsStore};
 
 /// Port for reading and writing the prefix config.
 ///
