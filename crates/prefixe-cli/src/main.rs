@@ -1,13 +1,16 @@
 mod config;
 mod payload;
+mod post_hook;
 mod predicate;
 
+use std::io::Read;
 use std::process;
 
-use prefixe::{FileProbeStore, PrefixEngine};
+use prefixe::{FileProbeStore, FileStatsStore, PrefixEngine};
 
 fn print_usage() {
     eprintln!("Usage: prefixe rewrite [--dry-run] [--config <path>] <command...>");
+    eprintln!("       prefixe post-hook   (reads Claude Code JSON from stdin)");
 }
 
 fn main() {
@@ -69,6 +72,37 @@ fn main() {
             // --dry-run and normal mode both print; future versions may differ
             let _ = dry_run;
             println!("{}", result.rewritten);
+        }
+        "post-hook" => {
+            let mut input = String::new();
+            std::io::stdin().read_to_string(&mut input).unwrap_or(0);
+            let payload: payload::HookPayload =
+                serde_json::from_str(&input).unwrap_or_else(|_| process::exit(0));
+            if payload.tool_name.as_deref() != Some("Bash") {
+                process::exit(0);
+            }
+            let command = match payload
+                .tool_input
+                .as_ref()
+                .and_then(|i| i.command.as_deref())
+            {
+                Some(c) if !c.is_empty() => c.to_string(),
+                _ => process::exit(0),
+            };
+            let exit_code = payload
+                .tool_response
+                .as_ref()
+                .and_then(|r| r.exit_code)
+                .unwrap_or(0);
+            if exit_code != 0 {
+                let prefix_store =
+                    prefixe::FilePrefixStore::new(prefixe::FilePrefixStore::default_path());
+                let probe_store = FileProbeStore::new(FileProbeStore::default_path());
+                let stats_store = FileStatsStore::new(FileStatsStore::default_path());
+                let out =
+                    post_hook::handle_failure(&command, &prefix_store, &probe_store, &stats_store);
+                println!("{}", serde_json::to_string(&out).unwrap_or_default());
+            }
         }
         other => {
             eprintln!("prefixe: unknown subcommand '{other}'");

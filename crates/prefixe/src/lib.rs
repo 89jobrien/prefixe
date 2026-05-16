@@ -494,6 +494,10 @@ pub mod testing {
         pub fn empty() -> Self {
             Self::new(vec![])
         }
+
+        pub fn with_entries(entries: Vec<ProbeEntry>) -> Self {
+            Self::new(entries)
+        }
     }
 
     pub struct FakeStatsStore {
