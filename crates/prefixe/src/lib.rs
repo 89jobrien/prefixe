@@ -3,6 +3,8 @@ pub mod engine;
 pub mod error;
 pub mod infra;
 
+use std::collections::HashMap;
+
 pub use domain::{
     CandidatePrefix, CommandRewriter, CommandSplitter, OriginalCommand, PrefixConfig, PrefixRule,
     RuleCondition, SuccessPredicate, TextualSplitter,
@@ -395,6 +397,48 @@ pub fn audit_state(prefix_store: &dyn PrefixStore) -> AuditState {
     AuditState { mappings }
 }
 
+/// Running counters for a specific candidate prefix.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PrefixCounters {
+    pub tried: u64,
+    pub confirmed: u64,
+    pub failed: u64,
+}
+
+/// Running counters for a specific command key.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CommandStats {
+    pub probes_initiated: u64,
+    /// Prefix tokens joined by `" "` when a mapping was confirmed.
+    pub confirmed_prefix: Option<String>,
+    /// ISO 8601 timestamp of confirmation.
+    pub confirmed_at: Option<String>,
+}
+
+/// Global running totals.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct GlobalStats {
+    pub probes_initiated: u64,
+    pub probes_confirmed: u64,
+    pub probes_exhausted: u64,
+}
+
+/// Full stats snapshot.
+#[derive(Debug, Clone, Default)]
+pub struct PrefixStats {
+    pub global: GlobalStats,
+    /// Key: prefix tokens joined by `" "` (e.g. `"op plugin run --"`).
+    pub by_prefix: HashMap<String, PrefixCounters>,
+    /// Key: command word (e.g. `"gh"`).
+    pub by_command: HashMap<String, CommandStats>,
+}
+
+/// Port for reading and writing prefix learning stats.
+pub trait StatsStore {
+    fn load(&self) -> PrefixStats;
+    fn save(&self, stats: &PrefixStats) -> Result<(), Error>;
+}
+
 /// Test doubles available to downstream crates under the `testing` feature.
 #[cfg(any(test, feature = "testing"))]
 pub use infra::path::ExplicitPathResolver;
@@ -449,6 +493,28 @@ pub mod testing {
 
         pub fn empty() -> Self {
             Self::new(vec![])
+        }
+    }
+
+    pub struct FakeStatsStore {
+        pub stats: std::cell::RefCell<PrefixStats>,
+    }
+
+    impl FakeStatsStore {
+        pub fn new() -> Self {
+            Self {
+                stats: std::cell::RefCell::new(PrefixStats::default()),
+            }
+        }
+    }
+
+    impl StatsStore for FakeStatsStore {
+        fn load(&self) -> PrefixStats {
+            self.stats.borrow().clone()
+        }
+        fn save(&self, stats: &PrefixStats) -> Result<(), Error> {
+            *self.stats.borrow_mut() = stats.clone();
+            Ok(())
         }
     }
 
@@ -766,6 +832,35 @@ mod tests {
             .remove_matching(&OriginalCommand::from("gh issue list"))
             .unwrap();
         assert!(store.load().is_empty());
+    }
+
+    #[test]
+    fn prefix_stats_defaults_to_zero() {
+        let stats = PrefixStats::default();
+        assert_eq!(stats.global.probes_initiated, 0);
+        assert_eq!(stats.global.probes_confirmed, 0);
+        assert_eq!(stats.global.probes_exhausted, 0);
+        assert!(stats.by_prefix.is_empty());
+        assert!(stats.by_command.is_empty());
+    }
+
+    #[test]
+    fn prefix_counters_increment() {
+        let mut counters = PrefixCounters::default();
+        counters.tried += 1;
+        counters.confirmed += 1;
+        assert_eq!(counters.tried, 1);
+        assert_eq!(counters.failed, 0);
+    }
+
+    #[test]
+    fn fake_stats_store_round_trips() {
+        use crate::testing::FakeStatsStore;
+        let store = FakeStatsStore::new();
+        let mut stats = store.load();
+        stats.global.probes_initiated = 5;
+        store.save(&stats).unwrap();
+        assert_eq!(store.load().global.probes_initiated, 5);
     }
 
     #[test]
