@@ -14,7 +14,9 @@ path = "src/main.rs"
 prefixe = { path = "../prefixe" }
 toml = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
+regex = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
