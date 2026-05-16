@@ -1,6 +1,7 @@
 mod config;
 mod payload;
 mod post_hook;
+mod pre_hook;
 mod predicate;
 
 use std::io::Read;
@@ -56,6 +57,14 @@ fn main() {
             }
 
             let cmd = cmd_parts.join(" ");
+            let probe_store = FileProbeStore::new(FileProbeStore::default_path());
+
+            // If this command is a candidate probe retry, mark it Probing and pass through
+            if pre_hook::check_probe_match(&cmd, &probe_store) {
+                println!("{cmd}");
+                return;
+            }
+
             let cfg_path = config::resolve_config_path(config_path.as_deref());
             let store = match config::load_store(cfg_path) {
                 Ok(s) => s,
@@ -64,8 +73,6 @@ fn main() {
                     process::exit(2);
                 }
             };
-            let probe_path = FileProbeStore::default_path();
-            let probe_store = FileProbeStore::new(probe_path);
             let engine = PrefixEngine::new(store, probe_store);
             let result = engine.rewrite(&cmd);
 
