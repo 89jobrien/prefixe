@@ -4,8 +4,8 @@ pub mod error;
 pub mod infra;
 
 pub use domain::{
-    CommandRewriter, CommandSplitter, OriginalCommand, PrefixConfig, PrefixRule, RuleCondition,
-    TextualSplitter,
+    CandidatePrefix, CommandRewriter, CommandSplitter, OriginalCommand, PrefixConfig, PrefixRule,
+    RuleCondition, SuccessPredicate, TextualSplitter,
 };
 pub use engine::PrefixEngine;
 pub use error::Error;
@@ -211,7 +211,7 @@ pub fn lookup_prefix(segment: &str, config: &PrefixConfig) -> Option<PrefixMatch
     if let Some(candidate) = config.candidate_prefixes.first() {
         return Some(PrefixMatch::Candidate {
             key: first.to_string(),
-            prefix: candidate.clone(),
+            prefix: candidate.prefix.clone(),
         });
     }
 
@@ -300,8 +300,6 @@ pub fn rewrite_via_store(cmd: &str, store: &dyn PrefixStore) -> RewriteResult {
 /// ```
 pub fn rewrite_command(cmd: &str, config: &PrefixConfig) -> RewriteResult {
     let mut segs = split_segments(cmd);
-    let mut probes = Vec::new();
-
     for seg in &mut segs {
         let trimmed = seg.text.trim();
         if trimmed.is_empty() {
@@ -310,9 +308,9 @@ pub fn rewrite_command(cmd: &str, config: &PrefixConfig) -> RewriteResult {
         let Some(m) = lookup_prefix(trimmed, config) else {
             continue;
         };
-        let (key, prefix, is_candidate) = match m {
-            PrefixMatch::Confirmed { key, prefix } => (key, prefix, false),
-            PrefixMatch::Candidate { key, prefix } => (key, prefix, true),
+        let prefix = match m {
+            PrefixMatch::Confirmed { prefix, .. } => prefix,
+            PrefixMatch::Candidate { prefix, .. } => prefix,
         };
         let leading_len = seg.text.len() - seg.text.trim_start().len();
         let leading = &seg.text[..leading_len];
@@ -320,19 +318,11 @@ pub fn rewrite_command(cmd: &str, config: &PrefixConfig) -> RewriteResult {
         let trailing = &seg.text[trailing_start..];
         let prefix_str = prefix.join(" ");
         seg.text = format!("{leading}{prefix_str} {trimmed}{trailing}");
-
-        if is_candidate && config.learn_on_successful_fallback {
-            probes.push(ProbeEntry {
-                key,
-                prefix,
-                original_command: OriginalCommand::from(cmd),
-            });
-        }
     }
 
     RewriteResult {
         rewritten: rejoin(&segs),
-        probes,
+        probes: vec![], // probes are written by the post-hook on failure, not the pre-hook
     }
 }
 
@@ -509,9 +499,11 @@ mod tests {
                 .collect(),
             candidate_prefixes: candidates
                 .iter()
-                .map(|c| c.iter().map(|s| s.to_string()).collect())
+                .map(|c| CandidatePrefix {
+                    prefix: c.iter().map(|s| s.to_string()).collect(),
+                    success_when: SuccessPredicate::exit_zero(),
+                })
                 .collect(),
-            learn_on_successful_fallback: false,
         })
     }
 
@@ -671,24 +663,12 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_candidate_no_probe_when_learn_disabled() {
+    fn rewrite_candidate_no_probe_written_by_pre_hook() {
+        // Probes are written by the post-hook on failure, not the pre-hook.
         let store = make_store(&[], &[&["op", "plugin", "run", "--"]]);
         let r = rewrite_command("gh issue list", &store.load());
         assert_eq!(r.rewritten, "op plugin run -- gh issue list");
-        assert!(
-            r.probes.is_empty(),
-            "probes should be empty when learn=false"
-        );
-    }
-
-    #[test]
-    fn rewrite_candidate_records_probe_when_learn_enabled() {
-        let mut config = make_store(&[], &[&["op", "plugin", "run", "--"]]).config;
-        config.learn_on_successful_fallback = true;
-        let r = rewrite_command("gh issue list", &config);
-        assert_eq!(r.rewritten, "op plugin run -- gh issue list");
-        assert_eq!(r.probes.len(), 1);
-        assert_eq!(r.probes[0].key, "gh");
+        assert!(r.probes.is_empty(), "pre-hook never writes probes");
     }
 
     #[test]
@@ -953,7 +933,7 @@ mod tests {
     #[test]
     fn rule_with_no_conditions_always_applies() {
         use crate::PrefixEngine;
-        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::domain::PrefixRule;
         use crate::testing::{FakePrefixStore, FakeProbeStore};
 
         let rule = PrefixRule {
@@ -970,7 +950,7 @@ mod tests {
     #[test]
     fn env_var_set_condition_passes_when_var_present() {
         use crate::PrefixEngine;
-        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::domain::PrefixRule;
         use crate::testing::{FakePrefixStore, FakeProbeStore};
 
         unsafe { std::env::set_var("PREFIXE_TEST_VAR_20", "1") };
@@ -989,7 +969,7 @@ mod tests {
     #[test]
     fn env_var_set_condition_fails_when_var_absent() {
         use crate::PrefixEngine;
-        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::domain::PrefixRule;
         use crate::testing::{FakePrefixStore, FakeProbeStore};
 
         unsafe { std::env::remove_var("PREFIXE_TEST_VAR_ABSENT_20") };
@@ -1009,7 +989,7 @@ mod tests {
     #[test]
     fn cwd_glob_condition_matches_current_dir() {
         use crate::PrefixEngine;
-        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::domain::PrefixRule;
         use crate::testing::{FakePrefixStore, FakeProbeStore};
 
         let rule = PrefixRule {
@@ -1027,7 +1007,7 @@ mod tests {
     #[test]
     fn git_root_condition_true_inside_repo() {
         use crate::PrefixEngine;
-        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::domain::PrefixRule;
         use crate::testing::{FakePrefixStore, FakeProbeStore};
 
         let rule = PrefixRule {
@@ -1045,7 +1025,7 @@ mod tests {
     #[test]
     fn engine_rewrite_with_rules_applies_matching_rule() {
         use crate::PrefixEngine;
-        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::domain::PrefixRule;
         use crate::testing::{FakePrefixStore, FakeProbeStore};
 
         let rules = vec![PrefixRule {
@@ -1063,7 +1043,7 @@ mod tests {
     #[test]
     fn engine_rewrite_with_rules_skips_unmatched_condition() {
         use crate::PrefixEngine;
-        use crate::domain::{PrefixRule, RuleCondition};
+        use crate::domain::PrefixRule;
         use crate::testing::{FakePrefixStore, FakeProbeStore};
 
         unsafe { std::env::remove_var("PREFIXE_NEVER_SET_VAR") };

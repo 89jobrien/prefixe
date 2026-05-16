@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Error, PrefixStore, ProbeEntry, ProbeStore,
+    CandidatePrefix, Error, PrefixStore, ProbeEntry, ProbeStore, SuccessPredicate,
     domain::{OriginalCommand, PrefixConfig},
     infra::path::PathResolver,
 };
@@ -12,21 +12,77 @@ use crate::{
 // ── PrefixConfig TOML DTO ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(crate) struct SuccessPredicateDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdout_matches: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stderr_matches: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stderr_absent: bool,
+}
+
+impl From<SuccessPredicateDto> for SuccessPredicate {
+    fn from(dto: SuccessPredicateDto) -> Self {
+        Self {
+            exit_code: dto.exit_code,
+            stdout_matches: dto.stdout_matches,
+            stderr_matches: dto.stderr_matches,
+            stderr_absent: dto.stderr_absent,
+        }
+    }
+}
+
+impl From<&SuccessPredicate> for SuccessPredicateDto {
+    fn from(p: &SuccessPredicate) -> Self {
+        Self {
+            exit_code: p.exit_code,
+            stdout_matches: p.stdout_matches.clone(),
+            stderr_matches: p.stderr_matches.clone(),
+            stderr_absent: p.stderr_absent,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct CandidatePrefixDto {
+    pub prefix: Vec<String>,
+    #[serde(default)]
+    pub success_when: SuccessPredicateDto,
+}
+
+impl From<CandidatePrefixDto> for CandidatePrefix {
+    fn from(dto: CandidatePrefixDto) -> Self {
+        Self {
+            prefix: dto.prefix,
+            success_when: dto.success_when.into(),
+        }
+    }
+}
+
+impl From<&CandidatePrefix> for CandidatePrefixDto {
+    fn from(c: &CandidatePrefix) -> Self {
+        Self {
+            prefix: c.prefix.clone(),
+            success_when: SuccessPredicateDto::from(&c.success_when),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub(crate) struct PrefixConfigDto {
     #[serde(default)]
     pub mappings: HashMap<String, Vec<String>>,
     #[serde(default)]
-    pub candidate_prefixes: Vec<Vec<String>>,
-    #[serde(default)]
-    pub learn_on_successful_fallback: bool,
+    pub candidate_prefixes: Vec<CandidatePrefixDto>,
 }
 
 impl From<PrefixConfigDto> for PrefixConfig {
     fn from(dto: PrefixConfigDto) -> Self {
         Self {
             mappings: dto.mappings,
-            candidate_prefixes: dto.candidate_prefixes,
-            learn_on_successful_fallback: dto.learn_on_successful_fallback,
+            candidate_prefixes: dto.candidate_prefixes.into_iter().map(Into::into).collect(),
         }
     }
 }
@@ -35,8 +91,7 @@ impl From<&PrefixConfig> for PrefixConfigDto {
     fn from(cfg: &PrefixConfig) -> Self {
         Self {
             mappings: cfg.mappings.clone(),
-            candidate_prefixes: cfg.candidate_prefixes.clone(),
-            learn_on_successful_fallback: cfg.learn_on_successful_fallback,
+            candidate_prefixes: cfg.candidate_prefixes.iter().map(Into::into).collect(),
         }
     }
 }

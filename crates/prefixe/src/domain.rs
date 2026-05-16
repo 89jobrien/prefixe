@@ -30,27 +30,62 @@ pub struct PrefixRule {
     pub priority: u32,
 }
 
+/// Per-candidate success predicate. Default: exit code 0, everything else permissive.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SuccessPredicate {
+    /// Required exit code. `None` = any. Default: `Some(0)`.
+    pub exit_code: Option<i32>,
+    /// Regex stdout must match. `None` = not checked.
+    pub stdout_matches: Option<String>,
+    /// Regex stderr must match. `None` = not checked.
+    pub stderr_matches: Option<String>,
+    /// If `true`, stderr must be empty or absent.
+    pub stderr_absent: bool,
+}
+
+impl SuccessPredicate {
+    pub fn exit_zero() -> Self {
+        Self {
+            exit_code: Some(0),
+            ..Default::default()
+        }
+    }
+}
+
+/// One entry in `candidate_prefixes`: the tokens to prepend and the predicate
+/// used to decide whether the attempt succeeded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CandidatePrefix {
+    pub prefix: Vec<String>,
+    pub success_when: SuccessPredicate,
+}
+
 /// Pure domain config — no serialization dependencies.
 ///
 /// # Examples
 ///
 /// ```
-/// use prefixe::PrefixConfig;
+/// use prefixe::{CandidatePrefix, PrefixConfig, SuccessPredicate};
 ///
 /// let config = PrefixConfig {
-///     mappings: [("gh".to_string(), vec!["op".to_string(), "run".to_string(), "--".to_string()])]
+///     mappings: [("gh".to_string(), vec!["op".to_string(), "plugin".to_string(),
+///                "run".to_string(), "--".to_string()])]
 ///         .into_iter()
 ///         .collect(),
-///     candidate_prefixes: vec![],
-///     learn_on_successful_fallback: false,
+///     candidate_prefixes: vec![CandidatePrefix {
+///         prefix: vec!["op".to_string(), "plugin".to_string(), "run".to_string(),
+///                      "--".to_string()],
+///         success_when: SuccessPredicate::exit_zero(),
+///     }],
 /// };
 /// assert!(config.mappings.contains_key("gh"));
+/// assert_eq!(config.candidate_prefixes.len(), 1);
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct PrefixConfig {
     pub mappings: HashMap<String, Vec<String>>,
-    pub candidate_prefixes: Vec<Vec<String>>,
-    pub learn_on_successful_fallback: bool,
+    /// Ordered list of candidate prefixes to try when a command fails bare.
+    pub candidate_prefixes: Vec<CandidatePrefix>,
 }
 
 /// Newtype wrapper for an original (pre-rewrite) shell command string.
@@ -169,5 +204,37 @@ impl CommandSplitter for TextualSplitter {
 impl std::fmt::Display for OriginalCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn candidate_prefix_has_success_predicate() {
+        let c = CandidatePrefix {
+            prefix: vec![
+                "op".to_string(),
+                "plugin".to_string(),
+                "run".to_string(),
+                "--".to_string(),
+            ],
+            success_when: SuccessPredicate::exit_zero(),
+        };
+        assert_eq!(c.success_when.exit_code, Some(0));
+        assert!(!c.success_when.stderr_absent);
+    }
+
+    #[test]
+    fn prefix_config_uses_candidate_prefix_vec() {
+        let config = PrefixConfig {
+            mappings: HashMap::new(),
+            candidate_prefixes: vec![CandidatePrefix {
+                prefix: vec!["op".to_string()],
+                success_when: SuccessPredicate::default(),
+            }],
+        };
+        assert_eq!(config.candidate_prefixes.len(), 1);
     }
 }
