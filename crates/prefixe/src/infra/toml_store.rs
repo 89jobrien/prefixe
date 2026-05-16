@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    CandidatePrefix, Error, PrefixStore, ProbeEntry, ProbeStore, SuccessPredicate,
+    CandidatePrefix, Error, PrefixStore, ProbeEntry, ProbeState, ProbeStore, SuccessPredicate,
     domain::{OriginalCommand, PrefixConfig},
     infra::path::PathResolver,
 };
@@ -102,7 +102,10 @@ impl From<&PrefixConfig> for PrefixConfigDto {
 pub(crate) struct ProbeEntryToml {
     pub key: String,
     pub prefix: Vec<String>,
+    pub success_when: SuccessPredicateDto,
     pub original_command: String,
+    pub state: String, // "Pending" | "Probing"
+    pub candidate_index: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -116,7 +119,13 @@ impl From<&ProbeEntry> for ProbeEntryToml {
         Self {
             key: e.key.clone(),
             prefix: e.prefix.clone(),
+            success_when: SuccessPredicateDto::from(&e.success_when),
             original_command: e.original_command.0.clone(),
+            state: match e.state {
+                ProbeState::Pending => "Pending".to_string(),
+                ProbeState::Probing => "Probing".to_string(),
+            },
+            candidate_index: e.candidate_index,
         }
     }
 }
@@ -126,7 +135,14 @@ impl From<ProbeEntryToml> for ProbeEntry {
         Self {
             key: t.key,
             prefix: t.prefix,
+            success_when: t.success_when.into(),
             original_command: OriginalCommand(t.original_command),
+            state: if t.state == "Probing" {
+                ProbeState::Probing
+            } else {
+                ProbeState::Pending
+            },
+            candidate_index: t.candidate_index,
         }
     }
 }

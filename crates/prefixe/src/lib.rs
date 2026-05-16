@@ -218,26 +218,47 @@ pub fn lookup_prefix(segment: &str, config: &PrefixConfig) -> Option<PrefixMatch
     None
 }
 
-/// A pending candidate probe: we applied a speculative prefix and need post-hook
-/// learning to confirm or discard it.
+/// Lifecycle state of a candidate probe.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProbeState {
+    /// Command failed bare; waiting for Claude to retry with this candidate.
+    Pending,
+    /// Pre-hook rewrote the retry; waiting on the post-hook exit code.
+    Probing,
+}
+
+/// A pending or active candidate probe.
 ///
 /// # Examples
 ///
 /// ```
-/// use prefixe::{OriginalCommand, ProbeEntry};
+/// use prefixe::{OriginalCommand, ProbeEntry, ProbeState, SuccessPredicate};
 ///
 /// let entry = ProbeEntry {
 ///     key: "gh".to_string(),
 ///     prefix: vec!["op".to_string()],
+///     success_when: SuccessPredicate::exit_zero(),
 ///     original_command: OriginalCommand::from("gh issue list"),
+///     state: ProbeState::Pending,
+///     candidate_index: 0,
 /// };
 /// assert_eq!(entry.key, "gh");
+/// assert_eq!(entry.state, ProbeState::Pending);
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProbeEntry {
+    /// Leading command word (e.g. `"gh"`).
     pub key: String,
+    /// Candidate prefix tokens being tried.
     pub prefix: Vec<String>,
+    /// Predicate used to judge whether the attempt succeeded.
+    pub success_when: SuccessPredicate,
+    /// Original command that failed bare.
     pub original_command: OriginalCommand,
+    /// Current lifecycle state.
+    pub state: ProbeState,
+    /// Index into `config.candidate_prefixes` being tried.
+    pub candidate_index: usize,
 }
 
 /// Result of rewriting a full command string.
@@ -679,6 +700,17 @@ mod tests {
         assert!(r.probes.is_empty());
     }
 
+    fn make_probe(key: &str, cmd: &str) -> ProbeEntry {
+        ProbeEntry {
+            key: key.to_string(),
+            prefix: vec!["op".to_string()],
+            success_when: SuccessPredicate::exit_zero(),
+            original_command: OriginalCommand::from(cmd),
+            state: ProbeState::Pending,
+            candidate_index: 0,
+        }
+    }
+
     #[test]
     fn probe_store_round_trips() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -691,12 +723,16 @@ mod tests {
                 "run".to_string(),
                 "--".to_string(),
             ],
+            success_when: SuccessPredicate::exit_zero(),
             original_command: OriginalCommand::from("gh issue list"),
+            state: ProbeState::Pending,
+            candidate_index: 0,
         }];
         store.write(&entries).unwrap();
         let loaded = store.load();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].key, "gh");
+        assert_eq!(loaded[0].state, ProbeState::Pending);
     }
 
     #[test]
@@ -705,16 +741,8 @@ mod tests {
         let store = FileProbeStore::new(dir.path().join("candidates.toml"));
         store
             .write(&[
-                ProbeEntry {
-                    key: "gh".to_string(),
-                    prefix: vec![],
-                    original_command: OriginalCommand::from("gh issue list"),
-                },
-                ProbeEntry {
-                    key: "cargo".to_string(),
-                    prefix: vec![],
-                    original_command: OriginalCommand::from("cargo build"),
-                },
+                make_probe("gh", "gh issue list"),
+                make_probe("cargo", "cargo build"),
             ])
             .unwrap();
         store
@@ -768,17 +796,32 @@ mod tests {
     #[test]
     fn fake_probe_store_round_trip() {
         let store = FakeProbeStore::empty();
-        let entries = vec![ProbeEntry {
-            key: "gh".to_string(),
-            prefix: vec![],
-            original_command: OriginalCommand::from("gh issue list"),
-        }];
+        let entries = vec![make_probe("gh", "gh issue list")];
         store.write(&entries).unwrap();
         assert_eq!(store.load().len(), 1);
         store
             .remove_matching(&OriginalCommand::from("gh issue list"))
             .unwrap();
         assert!(store.load().is_empty());
+    }
+
+    #[test]
+    fn probe_entry_has_state_and_candidate_index() {
+        let entry = ProbeEntry {
+            key: "gh".to_string(),
+            prefix: vec!["op".to_string()],
+            success_when: SuccessPredicate::exit_zero(),
+            original_command: OriginalCommand::from("gh issue list"),
+            state: ProbeState::Pending,
+            candidate_index: 0,
+        };
+        assert_eq!(entry.state, ProbeState::Pending);
+        assert_eq!(entry.candidate_index, 0);
+    }
+
+    #[test]
+    fn probe_state_probing_is_distinct_from_pending() {
+        assert_ne!(ProbeState::Pending, ProbeState::Probing);
     }
 
     #[test]
