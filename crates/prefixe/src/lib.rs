@@ -159,8 +159,6 @@ pub fn rejoin(segs: &[Segment]) -> String {
 pub enum PrefixMatch {
     /// A definite mapping exists in `mappings`.
     Confirmed { key: String, prefix: Vec<String> },
-    /// No mapping; a candidate prefix is being tried speculatively.
-    Candidate { key: String, prefix: Vec<String> },
 }
 
 /// Look up the prefix for the leading command word(s) of `segment`.
@@ -205,13 +203,6 @@ pub fn lookup_prefix(segment: &str, config: &PrefixConfig) -> Option<PrefixMatch
         return Some(PrefixMatch::Confirmed {
             key: first.to_string(),
             prefix: prefix.clone(),
-        });
-    }
-
-    if let Some(candidate) = config.candidate_prefixes.first() {
-        return Some(PrefixMatch::Candidate {
-            key: first.to_string(),
-            prefix: candidate.prefix.clone(),
         });
     }
 
@@ -329,10 +320,7 @@ pub fn rewrite_command(cmd: &str, config: &PrefixConfig) -> RewriteResult {
         let Some(m) = lookup_prefix(trimmed, config) else {
             continue;
         };
-        let prefix = match m {
-            PrefixMatch::Confirmed { prefix, .. } => prefix,
-            PrefixMatch::Candidate { prefix, .. } => prefix,
-        };
+        let PrefixMatch::Confirmed { prefix, .. } = m;
         let leading_len = seg.text.len() - seg.text.trim_start().len();
         let leading = &seg.text[..leading_len];
         let trailing_start = leading_len + trimmed.len();
@@ -641,21 +629,12 @@ mod tests {
     }
 
     #[test]
-    fn lookup_candidate_fallback() {
+    fn lookup_prefix_returns_none_for_unknown_command_even_with_candidates() {
+        // candidate_prefixes no longer causes lookup_prefix to return a match;
+        // probing is triggered reactively by the post-hook on failure.
         let store = make_store(&[], &[&["op", "plugin", "run", "--"]]);
-        let result = lookup_prefix("gh issue list", &store.load());
-        assert_eq!(
-            result,
-            Some(PrefixMatch::Candidate {
-                key: "gh".to_string(),
-                prefix: vec![
-                    "op".to_string(),
-                    "plugin".to_string(),
-                    "run".to_string(),
-                    "--".to_string()
-                ],
-            })
-        );
+        assert_eq!(lookup_prefix("grep foo .", &store.load()), None);
+        assert_eq!(lookup_prefix("gh issue list", &store.load()), None);
     }
 
     #[test]
@@ -684,12 +663,13 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_candidate_no_probe_written_by_pre_hook() {
-        // Probes are written by the post-hook on failure, not the pre-hook.
+    fn rewrite_unknown_command_unchanged_when_no_confirmed_mapping() {
+        // Without a confirmed mapping, commands are passed through unchanged.
+        // Candidate probing is triggered reactively by the post-hook on failure.
         let store = make_store(&[], &[&["op", "plugin", "run", "--"]]);
         let r = rewrite_command("gh issue list", &store.load());
-        assert_eq!(r.rewritten, "op plugin run -- gh issue list");
-        assert!(r.probes.is_empty(), "pre-hook never writes probes");
+        assert_eq!(r.rewritten, "gh issue list");
+        assert!(r.probes.is_empty());
     }
 
     #[test]
