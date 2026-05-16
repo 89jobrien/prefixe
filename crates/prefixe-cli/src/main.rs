@@ -101,11 +101,38 @@ fn main() {
                 .as_ref()
                 .and_then(|r| r.exit_code)
                 .unwrap_or(0);
+            let stdout = payload
+                .tool_response
+                .as_ref()
+                .and_then(|r| r.stdout.as_deref())
+                .unwrap_or("");
+            let stderr = payload
+                .tool_response
+                .as_ref()
+                .and_then(|r| r.stderr.as_deref())
+                .unwrap_or("");
+            let prefix_store =
+                prefixe::FilePrefixStore::new(prefixe::FilePrefixStore::default_path());
+            let probe_store = FileProbeStore::new(FileProbeStore::default_path());
+            let stats_store = FileStatsStore::new(FileStatsStore::default_path());
+
+            // First: check if this resolves a Probing attempt
+            let out = post_hook::handle_probe_result(
+                &command,
+                exit_code,
+                stdout,
+                stderr,
+                &prefix_store,
+                &probe_store,
+                &stats_store,
+            );
+            if out.system_message.is_some() {
+                println!("{}", serde_json::to_string(&out).unwrap_or_default());
+                return;
+            }
+
+            // Otherwise: if failure, start a new probe cycle
             if exit_code != 0 {
-                let prefix_store =
-                    prefixe::FilePrefixStore::new(prefixe::FilePrefixStore::default_path());
-                let probe_store = FileProbeStore::new(FileProbeStore::default_path());
-                let stats_store = FileStatsStore::new(FileStatsStore::default_path());
                 let out =
                     post_hook::handle_failure(&command, &prefix_store, &probe_store, &stats_store);
                 println!("{}", serde_json::to_string(&out).unwrap_or_default());

@@ -489,7 +489,7 @@ impl StatsStore for FileStatsStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CandidatePrefix, ProbeState, SuccessPredicate};
+    use crate::{ProbeState, SuccessPredicate};
     use tempfile::TempDir;
 
     #[test]

@@ -504,6 +504,12 @@ pub mod testing {
         pub stats: std::cell::RefCell<PrefixStats>,
     }
 
+    impl Default for FakeStatsStore {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl FakeStatsStore {
         pub fn new() -> Self {
             Self {
