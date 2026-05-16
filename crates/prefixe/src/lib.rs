@@ -262,12 +262,10 @@ pub struct ProbeEntry {
 /// let config = PrefixConfig::default();
 /// let result = rewrite_command("echo hi", &config);
 /// assert_eq!(result.rewritten, "echo hi");
-/// assert!(result.probes.is_empty());
 /// ```
 #[derive(Debug, Clone)]
 pub struct RewriteResult {
     pub rewritten: String,
-    pub probes: Vec<ProbeEntry>,
 }
 
 /// Rewrite `cmd` using the given store as the prefix source.
@@ -294,10 +292,11 @@ pub fn rewrite_via_store(cmd: &str, store: &dyn PrefixStore) -> RewriteResult {
     rewrite_command(cmd, &store.load())
 }
 
-/// Rewrite `cmd` by prepending learned prefixes to each shell segment.
+/// Rewrite `cmd` by prepending confirmed prefix mappings to each shell segment.
 ///
-/// Probes are only recorded when `config.learn_on_successful_fallback` is `true`.
-/// Prefer [`rewrite_via_store`] or [`PrefixEngine::rewrite`] in application code.
+/// Candidate probing is handled reactively by the post-hook; this function only
+/// applies confirmed mappings. Prefer [`rewrite_via_store`] or
+/// [`PrefixEngine::rewrite`] in application code.
 ///
 /// # Examples
 ///
@@ -312,26 +311,24 @@ pub fn rewrite_via_store(cmd: &str, store: &dyn PrefixStore) -> RewriteResult {
 /// ```
 pub fn rewrite_command(cmd: &str, config: &PrefixConfig) -> RewriteResult {
     let mut segs = split_segments(cmd);
+
     for seg in &mut segs {
         let trimmed = seg.text.trim();
         if trimmed.is_empty() {
             continue;
         }
-        let Some(m) = lookup_prefix(trimmed, config) else {
+        let Some(PrefixMatch::Confirmed { prefix, .. }) = lookup_prefix(trimmed, config) else {
             continue;
         };
-        let PrefixMatch::Confirmed { prefix, .. } = m;
         let leading_len = seg.text.len() - seg.text.trim_start().len();
         let leading = &seg.text[..leading_len];
         let trailing_start = leading_len + trimmed.len();
         let trailing = &seg.text[trailing_start..];
-        let prefix_str = prefix.join(" ");
-        seg.text = format!("{leading}{prefix_str} {trimmed}{trailing}");
+        seg.text = format!("{leading}{} {trimmed}{trailing}", prefix.join(" "));
     }
 
     RewriteResult {
         rewritten: rejoin(&segs),
-        probes: vec![], // probes are written by the post-hook on failure, not the pre-hook
     }
 }
 
@@ -359,7 +356,7 @@ pub trait ProbeStore {
     fn remove_matching(&self, cmd: &OriginalCommand) -> Result<(), Error>;
 }
 
-/// Snapshot of prefix learning state for display / operator tooling.
+/// Snapshot of confirmed prefix mappings for display / operator tooling.
 ///
 /// # Examples
 ///
@@ -368,21 +365,18 @@ pub trait ProbeStore {
 ///
 /// let state = AuditState::default();
 /// assert!(state.mappings.is_empty());
-/// assert!(state.probes.is_empty());
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct AuditState {
     pub mappings: Vec<(String, Vec<String>)>,
-    pub probes: Vec<ProbeEntry>,
 }
 
-/// Assemble the current prefix learning state from both stores.
+/// Assemble the current confirmed mappings from the prefix store.
 ///
 /// # Examples
 ///
 /// ```
-/// use prefixe::{AuditState, Error, OriginalCommand, PrefixConfig, PrefixStore,
-///               ProbeEntry, ProbeStore, audit_state};
+/// use prefixe::{AuditState, Error, PrefixConfig, PrefixStore, audit_state};
 ///
 /// struct EmptyPrefixStore;
 /// impl PrefixStore for EmptyPrefixStore {
@@ -391,22 +385,14 @@ pub struct AuditState {
 ///     fn remove_mapping(&self, _: &str) -> Result<bool, Error> { Ok(false) }
 /// }
 ///
-/// struct EmptyProbeStore;
-/// impl ProbeStore for EmptyProbeStore {
-///     fn load(&self) -> Vec<ProbeEntry> { vec![] }
-///     fn write(&self, _: &[ProbeEntry]) -> Result<(), Error> { Ok(()) }
-///     fn remove_matching(&self, _: &OriginalCommand) -> Result<(), Error> { Ok(()) }
-/// }
-///
-/// let state = audit_state(&EmptyPrefixStore, &EmptyProbeStore);
+/// let state = audit_state(&EmptyPrefixStore);
 /// assert!(state.mappings.is_empty());
 /// ```
-pub fn audit_state(prefix_store: &dyn PrefixStore, probe_store: &dyn ProbeStore) -> AuditState {
+pub fn audit_state(prefix_store: &dyn PrefixStore) -> AuditState {
     let config = prefix_store.load();
     let mut mappings: Vec<(String, Vec<String>)> = config.mappings.into_iter().collect();
     mappings.sort_by(|a, b| a.0.cmp(&b.0));
-    let probes = probe_store.load();
-    AuditState { mappings, probes }
+    AuditState { mappings }
 }
 
 /// Test doubles available to downstream crates under the `testing` feature.
@@ -649,7 +635,6 @@ mod tests {
         let store = make_store(&[("gh", &["op", "plugin", "run", "--"])], &[]);
         let r = rewrite_command("gh issue list", &store.load());
         assert_eq!(r.rewritten, "op plugin run -- gh issue list");
-        assert!(r.probes.is_empty());
     }
 
     #[test]
@@ -669,7 +654,6 @@ mod tests {
         let store = make_store(&[], &[&["op", "plugin", "run", "--"]]);
         let r = rewrite_command("gh issue list", &store.load());
         assert_eq!(r.rewritten, "gh issue list");
-        assert!(r.probes.is_empty());
     }
 
     #[test]
@@ -677,7 +661,6 @@ mod tests {
         let store = make_store(&[], &[]);
         let r = rewrite_command("echo hello", &store.load());
         assert_eq!(r.rewritten, "echo hello");
-        assert!(r.probes.is_empty());
     }
 
     fn make_probe(key: &str, cmd: &str) -> ProbeEntry {
@@ -786,6 +769,14 @@ mod tests {
     }
 
     #[test]
+    fn rewrite_result_has_no_probes_field() {
+        let r = RewriteResult {
+            rewritten: "echo hi".to_string(),
+        };
+        assert_eq!(r.rewritten, "echo hi");
+    }
+
+    #[test]
     fn probe_entry_has_state_and_candidate_index() {
         let entry = ProbeEntry {
             key: "gh".to_string(),
@@ -883,7 +874,6 @@ mod tests {
             fn rewrite(&self, cmd: &str) -> RewriteResult {
                 RewriteResult {
                     rewritten: cmd.to_string(),
-                    probes: vec![],
                 }
             }
         }
@@ -898,7 +888,6 @@ mod tests {
         let fake = FakeRewriter {
             result: RewriteResult {
                 rewritten: "op run -- gh".to_string(),
-                probes: vec![],
             },
         };
         assert_eq!(fake.rewrite("gh").rewritten, "op run -- gh");

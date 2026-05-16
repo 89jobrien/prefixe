@@ -10,7 +10,6 @@ impl CommandRewriter for EchoRewriter {
     fn rewrite(&self, _cmd: &str) -> RewriteResult {
         RewriteResult {
             rewritten: self.fixed_output.clone(),
-            probes: vec![],
         }
     }
 }

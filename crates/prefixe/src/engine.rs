@@ -38,6 +38,8 @@ use crate::{
 /// ```
 pub struct PrefixEngine<P: PrefixStore, Q: ProbeStore> {
     prefix_store: P,
+    // probe_store is accessed directly by the post-hook CLI, not through the engine
+    #[allow(dead_code)]
     probe_store: Q,
 }
 
@@ -81,9 +83,9 @@ impl<P: PrefixStore, Q: ProbeStore> PrefixEngine<P, Q> {
         rewrite_command(cmd, &config)
     }
 
-    /// Return a snapshot of current mappings and pending probes.
+    /// Return a snapshot of current confirmed mappings.
     pub fn audit(&self) -> AuditState {
-        audit_state(&self.prefix_store, &self.probe_store)
+        audit_state(&self.prefix_store)
     }
 
     /// Persist a confirmed prefix mapping.
@@ -140,7 +142,6 @@ impl<P: PrefixStore, Q: ProbeStore> PrefixEngine<P, Q> {
         sorted.sort_by(|a, b| b.priority.cmp(&a.priority));
 
         let mut segs = split_segments(cmd);
-        let probes = Vec::new();
 
         for seg in &mut segs {
             let trimmed = seg.text.trim();
@@ -180,7 +181,6 @@ impl<P: PrefixStore, Q: ProbeStore> PrefixEngine<P, Q> {
 
         RewriteResult {
             rewritten: rejoin(&segs),
-            probes,
         }
     }
 }
