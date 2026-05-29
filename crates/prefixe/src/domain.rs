@@ -144,7 +144,7 @@ impl From<String> for OriginalCommand {
 ///
 /// impl CommandRewriter for NoOpRewriter {
 ///     fn rewrite(&self, cmd: &str) -> RewriteResult {
-///         RewriteResult { rewritten: cmd.to_string(), probes: vec![] }
+///         RewriteResult { rewritten: cmd.to_string() }
 ///     }
 /// }
 ///
