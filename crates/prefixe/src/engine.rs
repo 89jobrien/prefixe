@@ -139,7 +139,7 @@ impl<P: PrefixStore, Q: ProbeStore> PrefixEngine<P, Q> {
     pub fn rewrite_with_rules(&self, cmd: &str, rules: &[PrefixRule]) -> RewriteResult {
         // Stable sort: higher priority first, ties keep original order.
         let mut sorted: Vec<&PrefixRule> = rules.iter().collect();
-        sorted.sort_by(|a, b| b.priority.cmp(&a.priority));
+        sorted.sort_by_key(|rule| std::cmp::Reverse(rule.priority));
 
         let mut segs = split_segments(cmd);
 

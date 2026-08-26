@@ -11,7 +11,7 @@ name = "prefixe"
 path = "src/main.rs"
 
 [dependencies]
-prefixe = { path = "../prefixe" }
+prefixe = { path = "../prefixe", version = "^0.5.0" }
 toml = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -20,5 +20,5 @@ regex = { workspace = true }
 shell-words = { workspace = true }
 
 [dev-dependencies]
-prefixe = { path = "../prefixe", features = ["testing"] }
+prefixe = { path = "../prefixe", version = "^0.5.0", features = ["testing"] }
 tempfile = { workspace = true }
