@@ -1,3 +1,5 @@
+//! Property tests for splitter round trips and rewriter determinism.
+
 use prefixe::{CommandRewriter, CommandSplitter, RewriteResult, TextualSplitter};
 use proptest::prelude::*;
 

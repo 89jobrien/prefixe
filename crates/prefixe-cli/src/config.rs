@@ -1,3 +1,5 @@
+//! Resolves and validates the CLI's prefix configuration file.
+
 use std::path::PathBuf;
 
 use prefixe::FilePrefixStore;

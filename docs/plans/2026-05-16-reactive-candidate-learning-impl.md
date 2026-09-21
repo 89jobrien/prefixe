@@ -138,7 +138,7 @@ Update the doc-comment example for `PrefixConfig`:
 
 3. Verify:
 
-```
+```text
 cargo nextest run -p prefixe               → all green
 cargo clippy -p prefixe -- -D warnings     → zero warnings
 ```
@@ -227,7 +227,7 @@ pub use self::ProbeState;  // add to existing pub items
 
 3. Verify:
 
-```
+```text
 cargo nextest run -p prefixe               → all green
 cargo clippy -p prefixe -- -D warnings     → zero warnings
 ```
@@ -311,7 +311,7 @@ Fix all tests that reference `PrefixMatch::Candidate` → delete them (now teste
 
 3. Verify:
 
-```
+```text
 cargo nextest run -p prefixe               → all green
 cargo clippy -p prefixe -- -D warnings     → zero warnings
 ```
@@ -410,7 +410,7 @@ Fix all remaining compile errors from removing `probes`.
 
 3. Verify:
 
-```
+```text
 cargo nextest run -p prefixe               → all green
 cargo clippy -p prefixe -- -D warnings     → zero warnings
 ```
@@ -532,7 +532,7 @@ pub use self::{
 
 3. Verify:
 
-```
+```text
 cargo nextest run -p prefixe               → all green
 cargo clippy -p prefixe -- -D warnings     → zero warnings
 ```
@@ -727,7 +727,7 @@ impl From<ProbeEntryToml> for ProbeEntry {
 
 3. Verify:
 
-```
+```text
 cargo nextest run -p prefixe               → all green
 cargo clippy -p prefixe -- -D warnings     → zero warnings
 ```
@@ -908,7 +908,7 @@ pub use infra::toml_store::{FilePrefixStore, FileProbeStore, FileStatsStore};
 
 3. Verify:
 
-```
+```text
 cargo nextest run -p prefixe               → all green
 cargo clippy -p prefixe -- -D warnings     → zero warnings
 ```
@@ -1087,7 +1087,7 @@ mod predicate;
 
 3. Verify:
 
-```
+```text
 cargo nextest run -p prefixe-cli           → all green
 cargo clippy -p prefixe-cli -- -D warnings → zero warnings
 ```
@@ -1292,7 +1292,7 @@ Add `use std::io::Read;` at top of `main.rs`.
 
 3. Verify:
 
-```
+```text
 cargo nextest run -p prefixe-cli           → all green
 cargo clippy -p prefixe-cli -- -D warnings → zero warnings
 ```
@@ -1426,7 +1426,7 @@ Add `mod pre_hook;` to `main.rs`.
 
 3. Verify:
 
-```
+```text
 cargo nextest run -p prefixe-cli           → all green
 cargo clippy -p prefixe-cli -- -D warnings → zero warnings
 ```
@@ -1726,7 +1726,7 @@ or when a Probing probe exists (check probe first regardless of exit code):
 
 3. Verify:
 
-```
+```text
 cargo nextest run -p prefixe-cli           → all green
 cargo clippy -p prefixe-cli -- -D warnings → zero warnings
 cargo nextest run --workspace              → all green

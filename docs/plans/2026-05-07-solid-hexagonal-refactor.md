@@ -124,7 +124,6 @@ adapters isolated in their own module.
    ```
 
 4. Update `FileProbeStore`, `FakeProbeStore`, and all call sites in tests.
-
 5. Write failing test first:
 
    ```rust
@@ -207,7 +206,6 @@ adapters isolated in their own module.
 
 4. Remove `#[derive(Serialize, Deserialize)]` from `PrefixConfig` in `lib.rs`; use only
    `PrefixConfigDto` in `FilePrefixStore`.
-
 5. Write failing test:
 
    ```rust
@@ -242,6 +240,7 @@ adapters isolated in their own module.
    ```
 
 4. Verify: `cargo nextest run -p prefixe` → green. No compile errors.
+
 5. `git commit -m "refactor(prefixe): move TOML infra types to infra::toml_store module (#13)"`
 
 ---
@@ -384,7 +383,6 @@ adapters isolated in their own module.
    ```
 
 3. Re-export `CommandSplitter` and `TextualSplitter` from `lib.rs`.
-
 4. Verify: `cargo nextest run -p prefixe` → green.
 5. `git commit -m "feat(prefixe): CommandSplitter trait with TextualSplitter default (#17)"`
 
@@ -425,7 +423,6 @@ adapters isolated in their own module.
    ```
 
 3. Re-export from `lib.rs`.
-
 4. Add `FakeRewriter` to `testing` module:
 
    ```rust
@@ -586,6 +583,7 @@ adapters isolated in their own module.
    `PrefixEngine::rewrite`.
 
 4. Verify: `cargo nextest run -p prefixe` → green. `cargo clippy -p prefixe -- -D warnings` → clean.
+
 5. `git commit -m "refactor(prefixe): rewrite_command internal; add rewrite_via_store port API (#15)"`
 
 ---

@@ -1,3 +1,5 @@
+//! Orchestrates command rewriting over prefix and probe store ports.
+
 use crate::{
     AuditState, Error, PrefixStore, ProbeStore, RewriteResult, audit_state,
     domain::{CommandRewriter, PrefixRule, RuleCondition},

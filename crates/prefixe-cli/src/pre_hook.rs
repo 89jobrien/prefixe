@@ -1,3 +1,5 @@
+//! Recognizes candidate retry commands and marks their probes active.
+
 use prefixe::{ProbeState, ProbeStore};
 
 /// Check if `command` matches a Pending probe's expected retry command.

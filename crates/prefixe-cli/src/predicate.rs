@@ -1,3 +1,5 @@
+//! Evaluates command results against candidate success predicates.
+
 #![allow(dead_code)] // used in Tasks 9-11 (post_hook, pre_hook)
 
 use prefixe::SuccessPredicate;

@@ -103,7 +103,7 @@ mod tests {
 
 ## Project Structure
 
-```
+```text
 prefixe/
 ├── crates/
 │   ├── prefixe/        # Library: core parsing, shell abstractions

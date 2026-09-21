@@ -1,3 +1,5 @@
+//! Dispatches command rewriting and Claude Code post-hook processing.
+
 mod config;
 mod payload;
 mod post_hook;

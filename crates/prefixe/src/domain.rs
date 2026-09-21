@@ -1,3 +1,5 @@
+//! Domain types and ports for prefix rules, command rewriting, and splitting.
+
 use std::collections::HashMap;
 
 /// A single condition that must hold for a [`PrefixRule`] to be evaluated.
@@ -44,6 +46,7 @@ pub struct SuccessPredicate {
 }
 
 impl SuccessPredicate {
+    /// Requires a successful process exit without constraining output.
     pub fn exit_zero() -> Self {
         Self {
             exit_code: Some(0),
@@ -152,6 +155,7 @@ impl From<String> for OriginalCommand {
 /// assert_eq!(r.rewrite("echo hi").rewritten, "echo hi");
 /// ```
 pub trait CommandRewriter {
+    /// Rewrites a shell command according to the strategy's prefix rules.
     fn rewrite(&self, cmd: &str) -> crate::RewriteResult;
 }
 
@@ -171,7 +175,9 @@ pub trait CommandRewriter {
 /// assert_eq!(s.rejoin(&segs), "a && b");
 /// ```
 pub trait CommandSplitter {
+    /// Splits a compound shell command into text and separator segments.
     fn split(&self, cmd: &str) -> Vec<crate::Segment>;
+    /// Reassembles segments into a shell command.
     fn rejoin(&self, segs: &[crate::Segment]) -> String;
 }
 

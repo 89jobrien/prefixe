@@ -1,3 +1,5 @@
+//! Error types for prefix persistence and TOML conversion.
+
 /// Crate-level error type for all fallible prefixe operations.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

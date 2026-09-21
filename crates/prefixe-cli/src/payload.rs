@@ -1,3 +1,5 @@
+//! Serde models for the Claude Code hook input and output payloads.
+
 #![allow(dead_code)] // types used in Tasks 9-11 (post_hook, pre_hook)
 
 use serde::{Deserialize, Serialize};
@@ -34,6 +36,7 @@ pub struct PostHookOutput {
 }
 
 impl PostHookOutput {
+    /// Allows hook processing and sends `msg` to Claude as a system message.
     pub fn allow_with_message(msg: impl Into<String>) -> Self {
         Self {
             decision: Some("allow".to_string()),
@@ -41,6 +44,7 @@ impl PostHookOutput {
         }
     }
 
+    /// Allows hook processing without sending a system message.
     pub fn silent() -> Self {
         Self {
             decision: Some("allow".to_string()),

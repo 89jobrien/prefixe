@@ -1,3 +1,5 @@
+//! TOML-backed adapters for prefix mappings, candidate probes, and learning statistics.
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -148,7 +150,7 @@ impl From<ProbeEntryToml> for ProbeEntry {
     }
 }
 
-// ── FilePrefixStore ──────────────────────────────────────────────────────────
+// ── Confirmed prefix persistence ─────────────────────────────────────────────
 
 /// File-backed implementation reading `~/.config/rx/prefixes.toml`.
 ///
@@ -168,14 +170,17 @@ pub struct FilePrefixStore {
 }
 
 impl FilePrefixStore {
+    /// Uses `path` as the confirmed-prefix configuration file.
     pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
 
+    /// Uses the prefix configuration path supplied by `r`.
     pub fn from_resolver(r: &dyn PathResolver) -> Self {
         Self::new(r.prefix_config_path())
     }
 
+    /// Resolves `CRS_RX_PREFIXES` or the XDG/home-relative fallback path.
     pub fn default_path() -> PathBuf {
         std::env::var_os("CRS_RX_PREFIXES")
             .map(PathBuf::from)
@@ -235,7 +240,7 @@ impl PrefixStore for FilePrefixStore {
     }
 }
 
-// ── FileProbeStore ───────────────────────────────────────────────────────────
+// ── Candidate probe persistence ──────────────────────────────────────────────
 
 /// File-backed probe store at `.ctx/candidates.toml`.
 ///
@@ -254,14 +259,17 @@ pub struct FileProbeStore {
 }
 
 impl FileProbeStore {
+    /// Uses `path` as the candidate probe state file.
     pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
 
+    /// Uses the probe state path supplied by `r`.
     pub fn from_resolver(r: &dyn PathResolver) -> Self {
         Self::new(r.probe_store_path())
     }
 
+    /// Resolves `candidates.toml` beneath `CRS_CTX_DIR` or `.ctx`.
     pub fn default_path() -> PathBuf {
         std::env::var_os("CRS_CTX_DIR")
             .map(PathBuf::from)
@@ -428,7 +436,7 @@ impl From<&PrefixStats> for PrefixStatsDto {
     }
 }
 
-// ── FileStatsStore ───────────────────────────────────────────────────────────
+// ── Learning statistics persistence ──────────────────────────────────────────
 
 /// File-backed stats store using TOML at `~/.config/rx/prefix-stats.toml`.
 ///
@@ -447,10 +455,12 @@ pub struct FileStatsStore {
 }
 
 impl FileStatsStore {
+    /// Uses `path` as the learning statistics file.
     pub fn new(path: PathBuf) -> Self {
         Self { path }
     }
 
+    /// Resolves `CRS_RX_STATS` or the XDG/home-relative fallback path.
     pub fn default_path() -> PathBuf {
         std::env::var_os("CRS_RX_STATS")
             .map(PathBuf::from)

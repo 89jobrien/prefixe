@@ -86,7 +86,7 @@ pub struct ProbeEntry {
 
 ### State machine
 
-```
+```text
 [no probe] ──(bare cmd fails)──► Pending(index=0)
 Pending    ──(pre-hook sees prefixed retry)──► Probing
 Probing    ──(predicate passes)──► [confirmed mapping] + notify Claude

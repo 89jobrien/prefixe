@@ -1,3 +1,5 @@
+//! Learns command prefixes and injects confirmed mappings into shell commands.
+
 pub mod domain;
 pub mod engine;
 pub mod error;
@@ -36,6 +38,7 @@ pub use infra::toml_store::{FilePrefixStore, FileProbeStore, FileStatsStore};
 /// assert!(store.load().mappings.is_empty());
 /// ```
 pub trait PrefixStore {
+    /// Loads confirmed mappings and ordered candidate prefixes.
     fn load(&self) -> PrefixConfig;
     /// Merge-write: add `key → prefix` to existing mappings without overwriting others.
     fn confirm_mapping(&self, key: &str, prefix: &[String]) -> Result<(), Error>;
@@ -353,8 +356,11 @@ pub fn rewrite_command(cmd: &str, config: &PrefixConfig) -> RewriteResult {
 /// assert!(store.load().is_empty());
 /// ```
 pub trait ProbeStore {
+    /// Loads pending and active candidate probes.
     fn load(&self) -> Vec<ProbeEntry>;
+    /// Replaces persisted probe state with `entries`.
     fn write(&self, entries: &[ProbeEntry]) -> Result<(), Error>;
+    /// Removes probes whose original command equals `cmd`.
     fn remove_matching(&self, cmd: &OriginalCommand) -> Result<(), Error>;
 }
 
@@ -435,7 +441,9 @@ pub struct PrefixStats {
 
 /// Port for reading and writing prefix learning stats.
 pub trait StatsStore {
+    /// Loads the current prefix learning statistics.
     fn load(&self) -> PrefixStats;
+    /// Replaces persisted statistics with `stats`.
     fn save(&self, stats: &PrefixStats) -> Result<(), Error>;
 }
 
@@ -454,6 +462,7 @@ pub mod testing {
     }
 
     impl FakePrefixStore {
+        /// Seeds the fake with a prefix configuration and empty call records.
         pub fn new(config: PrefixConfig) -> Self {
             Self {
                 config,
@@ -485,16 +494,19 @@ pub mod testing {
     }
 
     impl FakeProbeStore {
+        /// Seeds the fake with candidate probe entries.
         pub fn new(entries: Vec<ProbeEntry>) -> Self {
             Self {
                 entries: std::cell::RefCell::new(entries),
             }
         }
 
+        /// Creates a fake with no candidate probes.
         pub fn empty() -> Self {
             Self::new(vec![])
         }
 
+        /// Creates a fake containing `entries`.
         pub fn with_entries(entries: Vec<ProbeEntry>) -> Self {
             Self::new(entries)
         }
@@ -511,6 +523,7 @@ pub mod testing {
     }
 
     impl FakeStatsStore {
+        /// Creates a fake with zeroed learning statistics.
         pub fn new() -> Self {
             Self {
                 stats: std::cell::RefCell::new(PrefixStats::default()),

@@ -1,3 +1,5 @@
+//! Advances candidate probes from command results and records learning statistics.
+
 use prefixe::{OriginalCommand, PrefixStore, ProbeEntry, ProbeState, ProbeStore, StatsStore};
 
 use crate::payload::PostHookOutput;

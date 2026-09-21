@@ -1,3 +1,5 @@
+//! Path resolution port and environment-backed adapter.
+
 use std::path::PathBuf;
 
 /// Port: resolves file system paths for prefix config and probe store.
@@ -19,7 +21,9 @@ use std::path::PathBuf;
 /// assert_eq!(r.prefix_config_path(), PathBuf::from("/tmp/prefixes.toml"));
 /// ```
 pub trait PathResolver {
+    /// Resolves the confirmed-prefix configuration file.
     fn prefix_config_path(&self) -> PathBuf;
+    /// Resolves the candidate probe state file.
     fn probe_store_path(&self) -> PathBuf;
 }
 
